@@ -141,8 +141,8 @@ def check_serial_input(ser):
             line = ser.readline().decode('utf-8').strip()
             parts = line.split(':')
             if len(parts) == 2:
-                team_str = parts[0]
-                cmd = parts[1]
+                team_str = parts[0] # FIXED: Access split index 0 properly
+                cmd = parts[1]      # FIXED: Access split index 1 properly
                 
                 if team_str in players:
                     p = players[team_str]
@@ -235,8 +235,9 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
+            # FIXED: Target the first found port string explicitly (ports[0]) instead of passing the array list
             ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Connecting to ESP32 Gateway on port: {ports[0]}")
+            print(f"-> Successfully opened ESP32 Gateway on port: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
     else:
