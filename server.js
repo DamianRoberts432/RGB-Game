@@ -10,7 +10,7 @@ import glob
 import sys
 import serial
 from websockets.server import serve
-from flask import Flask, Response
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 connected_clients = set()
@@ -29,16 +29,22 @@ grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 history1 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 history2 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 history3 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
-players = {
-    "1": {"cursorX": 10, "cursorY": 32, "score": 0, "active": False, "color": "#ff3333"},
-    "2": {"cursorX": 18, "cursorY": 32, "score": 0, "active": False, "color": "#00aaff"},
-    "3": {"cursorX": 26, "cursorY": 32, "score": 0, "active": False, "color": "#33cc33"},
-    "4": {"cursorX": 34, "cursorY": 32, "score": 0, "active": False, "color": "#e6b800"},
-    "5": {"cursorX": 42, "cursorY": 32, "score": 0, "active": False, "color": "#ff00ff"},
-    "6": {"cursorX": 50, "cursorY": 32, "score": 0, "active": False, "color": "#00ffff"}
+stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+structure_awarded_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+
+# Master teams configuration maps containing colors and abbreviation tags
+teams_config = {
+    "1": {"color": "#ff3333", "name": "RED", "tag": "R"},
+    "2": {"color": "#00aaff", "name": "BLUE", "tag": "B"},
+    "3": {"color": "#33cc33", "name": "GREEN", "tag": "G"},
+    "4": {"color": "#e6b800", "name": "YELLOW", "tag": "Y"},
+    "5": {"color": "#ff00ff", "name": "MAGENTA", "tag": "M"},
+    "6": {"color": "#00ffff", "name": "CYAN", "tag": "C"}
 }
+
+# Master state mapping tracking multiple concurrent active players dynamically
+players = {}
 
 def seed_initial_tv_matrix():
     global grid
@@ -79,12 +85,13 @@ def tv_dashboard():
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
                 if (data.type === 'SYNC') {
-                    document.getElementById('s1').innerText = String(data.players["1"].score).padStart(4, '0');
-                    document.getElementById('s2').innerText = String(data.players["2"].score).padStart(4, '0');
-                    document.getElementById('s3').innerText = String(data.players["3"].score).padStart(4, '0');
-                    document.getElementById('s4').innerText = String(data.players["4"].score).padStart(4, '0');
-                    document.getElementById('s5').innerText = String(data.players["5"].score).padStart(4, '0');
-                    document.getElementById('s6').innerText = String(data.players["6"].score).padStart(4, '0');
+                    // Update global group score totals
+                    document.getElementById('s1').innerText = String(data.scores["1"]).padStart(4, '0');
+                    document.getElementById('s2').innerText = String(data.scores["2"]).padStart(4, '0');
+                    document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
+                    document.getElementById('s4').innerText = String(data.scores["4"]).padStart(4, '0');
+                    document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
+                    document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
                     ctx.fillStyle = '#000';
                     ctx.fillRect(0, 0, 700, 700);
@@ -104,13 +111,20 @@ def tv_dashboard():
                             }
                         }
                     }
-                    for (let t in data.players) {
-                        let p = data.players[t];
-                        if(p.active) {
-                            ctx.strokeStyle = p.color;
-                            ctx.lineWidth = 3;
-                            ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
-                        }
+                    
+                    // Render real-time multi-player cursor pointers and team color indicator tags
+                    for (let id in data.players) {
+                        let p = data.players[id];
+                        let conf = data.config[p.team];
+                        
+                        ctx.strokeStyle = conf.color;
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
+                        
+                        // Render floating team color text labels above reticle intersections
+                        ctx.fillStyle = conf.color;
+                        ctx.font = "bold 12px monospace";
+                        ctx.fillText(conf.tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
                     }
                 }
             };
@@ -134,34 +148,59 @@ def spawn_blob_glider(x, y, team):
 # BLOCK 2 OF 2: SERIAL RUNTIME PARSING, PHYSICS ENGINE, AND SOCKET BROADCASTS
 # ============================================================================
 
+# Maintain team scores globally outside player profiles to preserve metrics
+team_scores = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0}
+
+def get_balanced_team(requested_team):
+    # Counts active players currently grouped into each team number string
+    counts = {str(i): 0 for i in range(1, 7)}
+    for p in players.values():
+        counts[str(p["team"])] += 1
+        
+    min_team = min(counts, key=counts.get)
+    # If the requested team has more players than the absolute minimum squad size, auto-balance overrides assignment
+    if counts[str(requested_team)] > counts[min_team]:
+        print(f"-> Auto-Balance: Overriding Team {requested_team} to Team {min_team}")
+        return int(min_team)
+    return int(requested_team)
+
 def check_serial_input(ser):
-    global grid, stable_structure_map
+    global grid, stable_structure_map, structure_awarded_map, players
     if ser and ser.in_waiting > 0:
         try:
             line = ser.readline().decode('utf-8').strip()
             parts = line.split(':')
-            if len(parts) == 2:
-                team_str = parts[0].strip()
-                cmd = parts[1].strip()
+            if len(parts) == 3:
+                player_id = str(parts[0]).strip()
+                team_req = str(parts[1]).strip()
+                cmd = str(parts[2]).strip()
                 
-                if team_str in players:
-                    p = players[team_str]
-                    team = int(team_str)
-                    
-                    if cmd == 'JOIN':    p["active"] = True
-                    elif cmd == 'UP':    p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
+                if player_id not in players and cmd == 'JOIN':
+                    assigned_team = get_balanced_team(team_req)
+                    players[player_id] = {
+                        "cursorX": random.randint(10, 50),
+                        "cursorY": random.randint(10, 50),
+                        "team": assigned_team
+                    }
+                    # Send feedback payload down serial to force phone UI match color change if overwritten
+                    ser.write(f"ASSIGN:{player_id}:{assigned_team}\n".encode())
+                
+                if player_id in players:
+                    p = players[player_id]
+                    if cmd == 'UP':    p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
                     elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
                     elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
                     elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
-                    elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], team)
+                    elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
                     elif cmd == 'ESC':
                         grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
                         stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+                        structure_awarded_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
         except Exception:
             pass
 
 def calculate_conway_generation():
-    global grid, history1, history2, history3, stable_structure_map, players
+    global grid, history1, history2, history3, stable_structure_map, structure_awarded_map, team_scores
     
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
@@ -174,7 +213,6 @@ def calculate_conway_generation():
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
             counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
-            
             for i in range(-1, 2):
                 for j in range(-1, 2):
                     if i == 0 and j == 0:
@@ -195,7 +233,7 @@ def calculate_conway_generation():
                     max_team = max(counts, key=counts.get)
                     next_grid[x][y] = max_team
                     if grid[x][y] != EMPTY and grid[x][y] != max_team:
-                        players[str(max_team)]["score"] += 5
+                        team_scores[str(max_team)] += 5
                 else:
                     next_grid[x][y] = EMPTY
 
@@ -204,22 +242,32 @@ def calculate_conway_generation():
             current_cell = next_grid[x][y]
             is_stable_now = (current_cell != EMPTY) and (current_cell == history2[x][y] or current_cell == history3[x][y])
 
-            if is_stable_now and not stable_structure_map[x][y]:
+            if is_stable_now:
                 stable_structure_map[x][y] = True
-                if str(current_cell) in players:
-                    players[str(current_cell)]["score"] += 50
-            elif not is_stable_now and stable_structure_map[x][y]:
+                if not structure_awarded_map[x][y]:
+                    structure_awarded_map[x][y] = True
+                    if str(current_cell) in team_scores:
+                        team_scores[str(current_cell)] += 50
+            else:
                 stable_structure_map[x][y] = False
-                original_owner = history1[x][y]
-                if current_cell != EMPTY and current_cell != original_owner:
-                    if str(current_cell) in players:
-                        players[str(current_cell)]["score"] += 100
+                if structure_awarded_map[x][y]:
+                    structure_awarded_map[x][y] = False
+                    original_owner = history1[x][y]
+                    if current_cell != EMPTY and current_cell != original_owner:
+                        if str(current_cell) in team_scores:
+                            team_scores[str(current_cell)] += 100
 
     grid = next_grid
 
 async def broadcast_sync():
     if connected_clients:
-        packet = json.dumps({"type": "SYNC", "grid": grid, "players": players})
+        packet = json.dumps({
+            "type": "SYNC", 
+            "grid": grid, 
+            "players": players, 
+            "scores": team_scores,
+            "config": teams_config
+        })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
 
 async def ws_handler(websocket):
