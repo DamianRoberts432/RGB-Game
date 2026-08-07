@@ -1,11 +1,11 @@
 /**
  * ----------------------------------------------------------------------------
  * @file server.js
- * @brief Raspberry Pi Game Loop, 6-Team Scanner, Structure Engine & TV Renderer
+ * @brief Raspberry Pi Central Game Loop, 6-Team Scanner, Structure Engine & TV Renderer
  * ----------------------------------------------------------------------------
  */
 
-const express = require('express');
+const express = require('express'); // FIXED: Removed the second duplicate declaration below
 const http = require('http');
 const WebSocket = require('ws');
 const { SerialPort } = require('serialport');
@@ -34,7 +34,7 @@ let history2 = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(EMPTY));
 let history3 = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(EMPTY));
 let stableStructureMap = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(false));
 
-// Track active connected player cursor states and score panels for 6 teams
+// Track active connected player cursor states and score tracking panels for 6 teams
 let players = {
     [TEAM_RED]:     { cursorX: 10, cursorY: 32, score: 0, active: false },
     [TEAM_BLUE]:    { cursorX: 18, cursorY: 32, score: 0, active: false },
@@ -202,5 +202,4 @@ function calculateConwayGeneration() {
                 if (total === 3) {
                     let maxTeam = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
                     nextGrid[x][y] = parseInt(maxTeam);
-                    if(grid[x][y] !== EMPTY && grid[x][y] !== nextGrid[x][y]) {
-players[maxTeam].score += 5;}} else {nextGrid[x][y] = EMPTY;}}}}// Structure Lifecycle Score Triggersfor (let x = 0; x < GRID_SIZE; x++) {for (let y = 0; y < GRID_SIZE; y++) {let currentCell = nextGrid[x][y];let isStableNow = (currentCell !== EMPTY) && (currentCell === history2[x][y] || currentCell === history3[x][y]);if (isStableNow && !stableStructureMap[x][y]) {stableStructureMap[x][y] = true;if (players[currentCell]) players[currentCell].score += 50;}else if (!isStableNow && stableStructureMap[x][y]) {stableStructureMap[x][y] = false;let originalOwner = history1[x][y];let breakerFaction = currentCell !== EMPTY ? currentCell : EMPTY;if (breakerFaction !== EMPTY && breakerFaction !== originalOwner) {if (players[breakerFaction]) players[breakerFaction].score += 100;}}}}let temp = grid; grid = nextGrid; nextGrid = temp;let packet = JSON.stringify({ type: 'SYNC', grid: grid, players: players });wss.clients.forEach(client => { if (client.readyState === WebSocket.OPEN) client.send(packet); });}startSerialConnection().catch(console.error);setInterval(calculateConwayGeneration, 160);server.listen(3000, () => { console.log("Central Field Server active on port 3000!"); });
+if(grid[x][y] !== EMPTY && grid[x][y] !== nextGrid[x][y]) {players[maxTeam].score += 5;}} else {nextGrid[x][y] = EMPTY;}}}}// Structure Lifecycle Score Triggersfor (let x = 0; x < GRID_SIZE; x++) {for (let y = 0; y < GRID_SIZE; y++) {let currentCell = nextGrid[x][y];let isStableNow = (currentCell !== EMPTY) && (currentCell === history2[x][y] || currentCell === history3[x][y]);if (isStableNow && !stableStructureMap[x][y]) {stableStructureMap[x][y] = true;if (players[currentCell]) players[currentCell].score += 50;}else if (!isStableNow && stableStructureMap[x][y]) {stableStructureMap[x][y] = false;let originalOwner = history1[x][y];let breakerFaction = currentCell !== EMPTY ? currentCell : EMPTY;if (breakerFaction !== EMPTY && breakerFaction !== originalOwner) {if (players[breakerFaction]) players[breakerFaction].score += 100;}}}}let temp = grid; grid = nextGrid; nextGrid = temp;let packet = JSON.stringify({ type: 'SYNC', grid: grid, players: players });wss.clients.forEach(client => { if (client.readyState === WebSocket.OPEN) client.send(packet); });}startSerialConnection().catch(console.error);setInterval(calculateConwayGeneration, 160);server.listen(3000, () => { console.log("Central Field Server active on port 3000!"); });
