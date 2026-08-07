@@ -1,143 +1,217 @@
 /**
  * ----------------------------------------------------------------------------
- * @file Gateway.ino
- * @brief ESP32 Wi-Fi Gateway with Horizontal Retro NES Controller Interface
+ * @file server.js
+ * @brief Raspberry Pi Central Game Loop, Auto-Serial Scanner & TV Renderer
  * ----------------------------------------------------------------------------
  */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <DNSServer.h>
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 
-const char* ssid = "ESP32_BlasterNet";
-const char* password = "cellularcombat";
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-const byte DNS_PORT = 53;
-IPAddress apIP(192, 168, 4, 1);
-DNSServer dnsServer;
-WebServer server(80);
+// --- Game Engine Matrix Configuration ---
+const GRID_SIZE = 64; 
+const EMPTY = 0;
+const TEAM_RED = 1;
+const TEAM_BLUE = 2;
+const TEAM_GREEN = 3;
 
-void handleRoot() {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, orientation=landscape'>";
-  html += "<title>NES Controller</title>";
-  html += "<style>";
-  html += "body { background: #222; color: #fff; font-family: 'Courier New', sans-serif; text-align: center; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; overflow: hidden; }";
-  
-  // Team Selection Overlay Styles
-  html += "#setup-screen { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #111; }";
-  html += ".team-btn { width: 80%; max-width: 300px; height: 50px; font-size: 20px; font-weight: bold; border-radius: 8px; border: none; margin: 10px; color: white; cursor: pointer; }";
-  
-  // NES Controller Shell Styles (Forces Landscape Layout)
-  html += "#nes-pad { display: none; width: 100vw; height: 100vh; background: #ccd0d4; border-top: 15px solid #9ba0a4; box-sizing: border-box; position: relative; }";
-  html += "#dark-stripe { width: 100%; height: 60%; background: #4f5358; position: absolute; top: 20%; border-top: 4px solid #3a3c40; border-bottom: 4px solid #3a3c40; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; padding: 0 40px; }";
-  
-  // NES Classic D-Pad Styles
-  html += ".dpad-container { position: relative; width: 140px; height: 140px; }";
-  html += ".dpad-cross { background: #1a1a1a; position: absolute; border-radius: 6px; box-shadow: inset 0 0 5px #000; }";
-  html += ".dpad-vert { width: 44px; height: 140px; left: 48px; top: 0; }";
-  html += ".dpad-horiz { width: 140px; height: 44px; left: 0; top: 48px; }";
-  html += ".dpad-btn { position: absolute; background: transparent; border: none; outline: none; z-index: 10; touch-action: manipulation; }";
-  html += ".dpad-btn:active { background: rgba(255,0,0,0.2); border-radius: 4px; }";
-  
-  // Center Menu Option Buttons (Select/Start)
-  html += ".center-buttons { display: flex; gap: 20px; position: absolute; left: 50%; transform: translateX(-50%); bottom: 25%; }";
-  html += ".pill-button { display: flex; flex-direction: column; align-items: center; font-size: 11px; font-weight: bold; color: #ff3333; letter-spacing: 1px; }";
-  html += ".pill-src { width: 45px; height: 12px; background: #7c8185; border-radius: 6px; border: 2px solid #1a1a1a; box-shadow: 2px 2px #333; }";
-  html += ".pill-src:active { background: #5a5d5f; transform: translate(1px, 1px); box-shadow: 1px 1px #333; }";
-  
-  // Red Circular Action Buttons (A & B Elements)
-  html += ".action-container { display: flex; gap: 25px; background: #a2a6aa; padding: 10px 15px; border-radius: 20px; border: 3px solid #7c8185; box-shadow: inset 2px 2px 5px rgba(0,0,0,0.3); }";
-  html += ".red-btn-wrapper { display: flex; flex-direction: column-reverse; align-items: center; font-size: 18px; font-weight: bold; color: #ff3333; }";
-  html += ".red-circle { width: 54px; height: 54px; background: #b81c22; border-radius: 50%; border: 3px solid #1a1a1a; box-shadow: 3px 3px 0px #4f5358; touch-action: manipulation; }";
-  html += ".red-circle:active { background: #901217; transform: translate(2px, 2px); box-shadow: 1px 1px 0px #4f5358; }";
-  
-  html += "</style></head><body>";
-  
-  // Team Chooser Menu Panel
-  html += "<div id='setup-screen'>";
-  html += "<h2 style='color:#fff; margin-bottom:20px;'>SELECT YOUR TEAM</h2>";
-  html += "<button class='team-btn' style='background:#ff3333;' onclick='join(1)'>RED FORCE</button>";
-  html += "<button class='team-btn' style='background:#00aaff;' onclick='join(2)'>BLUE SQUAD</button>";
-  html += "<button class='team-btn' style='background:#33cc33;' onclick='join(3)'>GREEN LEGION</button>";
-  html += "</div>";
-  
-  // Horizontal NES Controller Layout Viewport Canvas
-  html += "<div id='nes-pad'>";
-  html += "  <div id='dark-stripe'>";
-  
-  // Left Side Element Block: D-Pad
-  html += "    <div class='dpad-container'>";
-  html += "      <div class='dpad-cross dpad-vert'></div>";
-  html += "      <div class='dpad-cross dpad-horiz'></div>";
-  html += "      <button class='dpad-btn' style='width:44px; height:48px; left:48px; top:0;' onclick='sendAction(\"UP\")'></button>";
-  html += "      <button class='dpad-btn' style='width:44px; height:48px; left:48px; bottom:0;' onclick='sendAction(\"DOWN\")'></button>";
-  html += "      <button class='dpad-btn' style='width:48px; height:44px; left:0; top:48px;' onclick='sendAction(\"LEFT\")'></button>";
-  html += "      <button class='dpad-btn' style='width:48px; height:44px; right:0; top:48px;' onclick='sendAction(\"RIGHT\")'></button>";
-  html += "    </div>";
-  
-  // Right Side Element Block: Action Core
-  html += "    <div class='action-container'>";
-  html += "      <div class='red-btn-wrapper'><span>B</span><button class='red-circle' onclick='sendAction(\"ESC\")'></button></div>";
-  html += "      <div class='red-btn-wrapper'><span>A</span><button class='red-circle' onclick='sendAction(\"FIRE\")'></button></div>";
-  html += "    </div>";
-  
-  html += "  </div>"; // End Dark Stripe
-  
-  // Center Core Elements: Select & Start
-  html += "  <div class='center-buttons'>";
-  html += "    <div class='pill-button'><span>SELECT</span><div class='pill-src'></div></div>";
-  html += "    <div class='pill-button'><span>START</span><div class='pill-src'></div></div>";
-  html += "  </div>";
-  
-  html += "</div>"; // End NES Pad
-  
-  html += "<script>";
-  html += "let myFaction = 0;";
-  html += "function join(team) {";
-  html += "  myFaction = team;";
-  html += "  fetch('http://192.168.4' + myFaction + '&cmd=JOIN');";
-  html += "  document.getElementById('setup-screen').style.display = 'none';";
-  html += "  document.getElementById('nes-pad').style.display = 'block';";
-  html += "}";
-  html += "function sendAction(cmd) {";
-  html += "  fetch('http://192.168.4' + myFaction + '&cmd=' + cmd);";
-  html += "}";
-  html += "</script></body></html>";
+let grid = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(EMPTY));
+let nextGrid = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(EMPTY));
 
-  server.send(200, "text/html", html);
+// Track active connected player cursor states and score tracking panels
+let players = {
+    [TEAM_RED]:   { cursorX: 16, cursorY: 32, score: 0, active: false },
+    [TEAM_BLUE]:  { cursorX: 32, cursorY: 32, score: 0, active: false },
+    [TEAM_GREEN]: { cursorX: 48, cursorY: 32, score: 0, active: false }
+};
+
+// Seed a few initial blocks right away so the TV board isn't completely empty at launch
+function seedInitialTVMatrix() {
+    for (let i = 0; i < 150; i++) {
+        let rx = Math.floor(Math.random() * GRID_SIZE);
+        let ry = Math.floor(Math.random() * GRID_SIZE);
+        grid[rx][ry] = Math.floor(Math.random() * 3) + 1;
+    }
+}
+seedInitialTVMatrix();
+
+// --- TV Screen Dashboard Delivery Template ---
+app.get('/tv', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Cell Combat TV Dashboard</title>
+            <style>
+                body { background: #050505; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+                canvas { background: #000; border: 4px solid #222; box-shadow: 0 0 30px rgba(255,255,255,0.05); }
+                #scoreboard { display: flex; width: 700px; justify-content: space-between; margin-bottom: 20px; font-size: 28px; font-weight: bold; background: #111; padding: 15px; border-radius: 10px; border: 2px solid #222;}
+            </style>
+        </head>
+        <body>
+            <div id="scoreboard">
+                <span style="color:#ff3333;">RED: <span id="s1">0000</span></span>
+                <span style="color:#00aaff;">BLUE: <span id="s2">0000</span></span>
+                <span style="color:#33cc33;">GREEN: <span id="s3">0000</span></span>
+            </div>
+            <canvas id="gameCanvas" width="700" height="700"></canvas>
+            <script>
+                let canvas = document.getElementById('gameCanvas');
+                let ctx = canvas.getContext('2d');
+                let ws = new WebSocket('ws://' + location.host);
+                ws.onmessage = (event) => {
+                    let data = JSON.parse(event.data);
+                    if (data.type === 'SYNC') {
+                        document.getElementById('s1').innerText = String(data.players[1].score).padStart(4, '0');
+                        document.getElementById('s2').innerText = String(data.players[2].score).padStart(4, '0');
+                        document.getElementById('s3').innerText = String(data.players[3].score).padStart(4, '0');
+                        
+                        ctx.fillStyle = '#000';
+                        ctx.fillRect(0, 0, 700, 700);
+                        
+                        let scale = 700 / 64;
+                        for (let x = 0; x < 64; x++) {
+                            for (let y = 0; y < 64; y++) {
+                                let val = data.grid[x][y];
+                                if (val !== 0) {
+                                    if(val === 1) ctx.fillStyle = '#ff3333';
+                                    if(val === 2) ctx.fillStyle = '#00aaff';
+                                    if(val === 3) ctx.fillStyle = '#33cc33';
+                                    ctx.fillRect(x * scale, y * scale, scale - 1, scale - 1);
+                                }
+                            }
+                        }
+                        for (let t in data.players) {
+                            let p = data.players[t];
+                            if(p.active) {
+                                if(t == 1) ctx.strokeStyle = '#ff3333';
+                                if(t == 2) ctx.strokeStyle = '#00aaff';
+                                if(t == 3) ctx.strokeStyle = '#33cc33';
+                                ctx.lineWidth = 3;
+                                ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
+                            }
+                        }
+                    }
+                };
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// --- AUTOMATIC USB SERIAL PORT SCANNER ---
+async function startSerialConnection() {
+    let ports = await SerialPort.list();
+    // Dynamically look for any active device matching standard ESP32/CH340/ACM profiles
+    let targetPort = ports.find(p => p.path.toLowerCase().includes('usb') || p.path.toLowerCase().includes('acm'));
+    
+    let path = targetPort ? targetPort.path : '/dev/ttyUSB0'; // Fallback address profile
+    console.log(`-> Connecting to ESP32 Gateway on port: ${path}`);
+    
+    const port = new SerialPort({ path: path, baudRate: 115200 });
+    const parser = port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
+
+    parser.on('data', (data) => {
+        let cleanStr = data.toString().trim();
+        let parts = cleanStr.split(':');
+        
+        if (parts.length === 2) {
+            let team = parseInt(parts[0]);
+            let cmd = parts[1].trim();
+            let p = players[team];
+            
+            if (p) {
+                if (cmd === 'JOIN')  p.active = true;
+                if (cmd === 'UP')    p.cursorY = (p.cursorY - 1 + GRID_SIZE) % GRID_SIZE;
+                if (cmd === 'DOWN')  p.cursorY = (p.cursorY + 1) % GRID_SIZE;
+                if (cmd === 'LEFT')  p.cursorX = (p.cursorX - 1 + GRID_SIZE) % GRID_SIZE;
+                if (cmd === 'RIGHT') p.cursorX = (p.cursorX + 1) % GRID_SIZE;
+                if (cmd === 'FIRE')  spawnBlobGlider(p.cursorX, p.cursorY, team);
+                if (cmd === 'ESC')   grid = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(EMPTY)); // B Button manual board clear
+            }
+        }
+    });
+
+    port.on('error', (err) => {
+        console.error("Serial Port Error: ", err.message);
+    });
 }
 
-void handleAction() {
-  if (server.hasArg("team") && server.hasArg("cmd")) {
-    String team = server.arg("team");
-    String cmd = server.arg("cmd");
-    Serial.println(team + ":" + cmd); 
-    server.send(200, "text/plain", "OK");
-  } else {
-    server.send(400, "text/plain", "BAD REQUEST");
-  }
+function spawnBlobGlider(x, y, team) {
+    grid[x][y] = team;
+    grid[(x + 1) % GRID_SIZE][(y + 1) % GRID_SIZE] = team;
+    grid[(x + 2) % GRID_SIZE][(y + 1) % GRID_SIZE] = team;
+    grid[x][(y + 2) % GRID_SIZE] = team;
+    grid[(x + 1) % GRID_SIZE][(y + 2) % GRID_SIZE] = team;
 }
 
-void handleNotFound() {
-  server.sendHeader("Location", "http://192.168.4", true);
-  server.send(302, "text/plain", "");
+// --- Tri-Faction Conway Rules Simulation Processing Engine ---
+function calculateConwayGeneration() {
+    for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+            let rN = 0, bN = 0, gN = 0;
+            
+            // Check full 8-neighbor bounding fields
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    if (i === 0 && j === 0) continue;
+                    let nx = (x + i + GRID_SIZE) % GRID_SIZE;
+                    let ny = (y + j + GRID_SIZE) % GRID_SIZE;
+                    if (grid[nx][ny] === TEAM_RED)   rN++;
+                    if (grid[nx][ny] === TEAM_BLUE)  bN++;
+                    if (grid[nx][ny] === TEAM_GREEN) gN++;
+                }
+            }
+            let total = rN + bN + gN;
+            let current = grid[x][y];
+            
+            if (current !== EMPTY) {
+                // Living spaces survive if they touch 2 or 3 neighbors
+                nextGrid[x][y] = (total < 2 || total > 3) ? EMPTY : current;
+            } else {
+                // Birth rule modifier for empty slots
+                if (total === 3) {
+                    // Battle Check: Dominant neighbor faction claims the point
+                    let max = Math.max(rN, bN, gN);
+                    if (max === rN) {
+                        nextGrid[x][y] = TEAM_RED;
+                        if(grid[x][y] !== EMPTY && grid[x][y] !== TEAM_RED) players[TEAM_RED].score += 10;
+                    } else if (max === bN) {
+                        nextGrid[x][y] = TEAM_BLUE;
+                        if(grid[x][y] !== EMPTY && grid[x][y] !== TEAM_BLUE) players[TEAM_BLUE].score += 10;
+                    } else {
+                        nextGrid[x][y] = TEAM_GREEN;
+                        if(grid[x][y] !== EMPTY && grid[x][y] !== TEAM_GREEN) players[TEAM_GREEN].score += 10;
+                    }
+                } else {
+                    nextGrid[x][y] = EMPTY;
+                }
+            }
+        }
+    }
+    let temp = grid; grid = nextGrid; nextGrid = temp;
+    
+    // Pushes synchronized frames out to the browser window lines instantly
+    let packet = JSON.stringify({ type: 'SYNC', grid: grid, players: players });
+    wss.clients.forEach(client => { if (client.readyState === WebSocket.OPEN) client.send(packet); });
 }
 
-void setup() {
-  Serial.begin(115200);
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(ssid, password);
-  dnsServer.start(DNS_PORT, "*", apIP);
-  
-  server.on("/", handleRoot);
-  server.on("/action", handleAction);
-  server.onNotFound(handleNotFound);
-  server.begin();
-}
+// Start serial reader tracking
+startSerialConnection().catch(console.error);
 
-void loop() {
-  dnsServer.processNextRequest();
-  server.handleClient();
-}
+// Set simulation tick processing frame loop speed (approx 6 ticks per second)
+setInterval(calculateConwayGeneration, 160);
+
+server.listen(3000, () => { 
+    console.log("=========================================");
+    console.log("  Central Field Server active on port 3000! ");
+    console.log("  📺 TV Address: http://localhost:3000/tv ");
+    console.log("=========================================");
+});
