@@ -15,7 +15,8 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
-GRID_SIZE = 64
+# FIXED: Doubled coordinate footprint size to make cells microscopic
+GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
 TEAM_BLUE = 2
@@ -40,7 +41,7 @@ players = {}
 
 def seed_initial_tv_matrix():
     global grid
-    for _ in range(300):
+    for _ in range(800): # Seed count increased to populate the dense 128x128 map
         rx = random.randint(0, GRID_SIZE - 1)
         ry = random.randint(0, GRID_SIZE - 1)
         grid[rx][ry] = random.randint(1, 6)
@@ -57,7 +58,8 @@ def tv_dashboard():
         <style>
             body { background: #050505; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
             canvas { background: #000; border: 4px solid #222; box-shadow: 0 0 30px rgba(255,255,255,0.05); }
-            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #111; padding: 15px; border-radius: 10px; border: 2px solid #222; text-align: center; }
+            /* FIXED: Redesigned panel as a structured 2-row grid to fit all 6 teams safely */
+            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #111; padding: 15px; border-radius: 10px; border: 2px solid #222; text-align: center; box-sizing: border-box; }
         </style>
     </head>
     <body>
@@ -75,7 +77,6 @@ def tv_dashboard():
             let ctx = canvas.getContext('2d');
             let ws = new WebSocket('ws://' + location.hostname + ':3001');
             
-            // Track player locations on previous frame to handle localized trail cleanup
             let lastDrawnPlayers = {};
 
             ws.onmessage = (event) => {
@@ -88,24 +89,21 @@ def tv_dashboard():
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
                     document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
-                    let scale = 700 / 64;
+                    // Scale parameter drops down from 700/64 to 700/128 to match smaller resolution
+                    let scale = 700 / 128;
 
-                    // 1. CLEAN RECT OVERRIDES: Completely clear previous frames reticle bounds to eliminate player trails
                     for (let id in lastDrawnPlayers) {
                         let lp = lastDrawnPlayers[id];
                         ctx.fillStyle = '#000';
-                        // Clean full cursor crosshair clip boundary box including top floating tag text
                         ctx.fillRect((lp.x * scale) - 4, (lp.y * scale) - 20, scale + 8, scale + 24);
                     }
 
-                    // 2. INCREASED GHOST TRAIL ENGINE OPAQUE:
-                    // Shifted to 22% (0.22) opacity so dead structures disappear and dissolve noticeably faster
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+                    // FIXED: Opacity step forced up to 35% (0.35) to dump trailing cells into black significantly faster
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
                     ctx.fillRect(0, 0, 700, 700);
                     
-                    // 3. RENDER ENVIRONMENT CELLS
-                    for (let x = 0; x < 64; x++) {
-                        for (let y = 0; y < 64; y++) {
+                    for (let x = 0; x < 128; x++) {
+                        for (let y = 0; y < 128; y++) {
                             let val = data.grid[x][y];
                             if (val !== 0) {
                                 if(val === 1) ctx.fillStyle = '#ff3333';
@@ -114,22 +112,19 @@ def tv_dashboard():
                                 if(val === 4) ctx.fillStyle = '#e6b800';
                                 if(val === 5) ctx.fillStyle = '#ff00ff';
                                 if(val === 6) ctx.fillStyle = '#00ffff';
-                                ctx.fillRect(x * scale, y * scale, scale - 1, scale - 1);
+                                ctx.fillRect(x * scale, y * scale, scale - 0.5, scale - 1);
                             }
                         }
                     }
 
-                    // 4. DRAW SHARP PLAYER CONTROLLER RETICLES (WITHOUT LEAVING TRAILS)
-                    lastDrawnPlayers = {}; // Rebuild tracking cache
+                    lastDrawnPlayers = {}; 
                     for (let id in data.players) {
                         let p = data.players[id];
                         let conf = data.config[p.team];
                         
-                        // Clear the immediate square underneath the current reticle to make it 100% sharp
                         ctx.fillStyle = '#000';
                         ctx.fillRect((p.cursorX * scale) - 1, (p.cursorY * scale) - 1, scale + 2, scale + 2);
                         
-                        // Re-render cell immediately if it is currently inside the reticle space
                         let currentGridVal = data.grid[p.cursorX][p.cursorY];
                         if (currentGridVal !== 0) {
                             if(currentGridVal === 1) ctx.fillStyle = '#ff3333';
@@ -138,10 +133,9 @@ def tv_dashboard():
                             if(currentGridVal === 4) ctx.fillStyle = '#e6b800';
                             if(currentGridVal === 5) ctx.fillStyle = '#ff00ff';
                             if(currentGridVal === 6) ctx.fillStyle = '#00ffff';
-                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 1, scale - 1);
+                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 0.5, scale - 1);
                         }
 
-                        // Draw crisp indicator boxes lines over the cleared sector
                         ctx.strokeStyle = conf.color;
                         ctx.lineWidth = 3;
                         ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
@@ -150,7 +144,6 @@ def tv_dashboard():
                         ctx.font = "bold 12px monospace";
                         ctx.fillText(conf.tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
                         
-                        // Cache locations for cleanup on next engine tick
                         lastDrawnPlayers[id] = { x: p.cursorX, y: p.cursorY };
                     }
                 }
@@ -200,8 +193,8 @@ def check_serial_input(ser):
                 if player_id not in players and cmd == 'JOIN':
                     assigned_team = get_balanced_team(team_req)
                     players[player_id] = {
-                        "cursorX": random.randint(10, 50),
-                        "cursorY": random.randint(10, 50),
+                        "cursorX": random.randint(20, 100), # Coordinates bound box widened to 128 canvas
+                        "cursorY": random.randint(20, 100),
                         "team": assigned_team
                     }
                 
@@ -294,8 +287,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Link on: {ports[0]}")
+            ser = serial.Serial(ports, 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Link on: {ports}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
