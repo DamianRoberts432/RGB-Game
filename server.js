@@ -16,6 +16,7 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
+# High-density coordinate grid space footprint
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -38,7 +39,6 @@ teams_config = {
 }
 
 players = {}
-# Thread queue cache managing active geometric collision vectors
 fireworks = []
 
 def seed_initial_tv_matrix():
@@ -58,9 +58,9 @@ def tv_dashboard():
     <head>
         <title>Cell Combat TV Dashboard</title>
         <style>
-            body { background: #050505; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
-            canvas { background: #000; border: 4px solid #222; box-shadow: 0 0 30px rgba(255,255,255,0.05); }
-            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #111; padding: 15px; border-radius: 10px; border: 2px solid #222; text-align: center; box-sizing: border-box; }
+            body { background: #020202; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+            canvas { background: #000; border: 4px solid #1a1a1a; box-shadow: 0 0 40px rgba(0,255,255,0.05); }
+            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #0a0a0a; padding: 15px; border-radius: 10px; border: 2px solid #1a1a1a; text-align: center; box-sizing: border-box; }
         </style>
     </head>
     <body>
@@ -79,12 +79,16 @@ def tv_dashboard():
             let ws = new WebSocket('ws://' + location.hostname + ':3002');
             
             let lastDrawnPlayers = {};
-            // Local client-side tracking state cache for fireworks transitions
             let activeFireworks = [];
+            
+            // Map configuration lookup tables
+            const colors = {1:'#ff3333', 2:'#00aaff', 3:'#33cc33', 4:'#e6b800', 5:'#ff00ff', 6:'#00ffff'};
+            const tags = {1:'R', 2:'B', 3:'G', 4:'Y', 5:'M', 6:'C'};
 
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
                 if (data.type === 'SYNC') {
+                    // Instantly drop team score updates
                     document.getElementById('s1').innerText = String(data.scores["1"]).padStart(4, '0');
                     document.getElementById('s2').innerText = String(data.scores["2"]).padStart(4, '0');
                     document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
@@ -94,93 +98,72 @@ def tv_dashboard():
                     
                     let scale = 700 / 128;
 
+                    // 1. Clean player name tag footprints completely
                     for (let id in lastDrawnPlayers) {
                         let lp = lastDrawnPlayers[id];
                         ctx.fillStyle = '#000';
                         ctx.fillRect((lp.x * scale) - 6, (lp.y * scale) - 24, scale + 14, scale + 30);
                     }
 
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                    // 2. High-speed trail decay matrix mask
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.40)';
                     ctx.fillRect(0, 0, 700, 700);
                     
-                    // Render standard field organisms cells
-                    for (let x = 0; x < 128; x++) {
-                        for (let y = 0; y < 128; y++) {
-                            let val = data.grid[x][y];
-                            if (val !== 0) {
-                                if(val === 1) ctx.fillStyle = '#ff3333';
-                                if(val === 2) ctx.fillStyle = '#00aaff';
-                                if(val === 3) ctx.fillStyle = '#33cc33';
-                                if(val === 4) ctx.fillStyle = '#e6b800';
-                                if(val === 5) ctx.fillStyle = '#ff00ff';
-                                if(val === 6) ctx.fillStyle = '#00ffff';
-                                ctx.fillRect(x * scale, y * scale, scale - 0.5, scale - 0.5);
-                            }
-                        }
-                    }
+                    // 3. SPARSE MATRIX RENDERING ENGINE (CODEC DECOMPRESSION):
+                    // Loop directly over live data pairs instead of reading empty spaces
+                    data.grid.forEach(cell => {
+                        let cx = cell[0];
+                        let cy = cell[1];
+                        let team = cell[2];
+                        ctx.fillStyle = colors[team];
+                        ctx.fillRect(cx * scale, cy * scale, scale - 0.5, scale - 0.5);
+                    });
 
-                    // Append new collision events dropped by the Python engine
+                    // 4. APPEND NEW INTERCEPTED CONWAY BATTLE COLLISIONS
                     if (data.collisions) {
                         data.collisions.forEach(c => {
-                            activeFireworks.push({ x: c.x * scale, y: c.y * scale, rad: 2, alpha: 1.0 });
+                            activeFireworks.push({ x: c.x * scale, y: c.y * scale, rad: 1, alpha: 1.0 });
                         });
                     }
 
-                    // NEW: VECTOR RAINBOW FIREWORK ENGINE RENDER
+                    // 5. VECTOR RAINBOW STARBURST ANIMATOR PASS
                     activeFireworks = activeFireworks.filter(f => {
                         ctx.save();
                         ctx.globalAlpha = f.alpha;
                         ctx.lineWidth = 2;
+                        let rainbow = ['#ff3333', '#e6b800', '#33cc33', '#00ffff', '#00aaff', '#ff00ff'];
                         
-                        // Project structured geometric multi-colored line segments (Rainbow burst)
-                        let rainbowColors = ['#ff3333', '#e6b800', '#33cc33', '#00ffff', '#00aaff', '#ff00ff'];
-                        for (let i = 0; i < 12; i++) {
-                            let angle = (i * Math.PI * 2) / 12;
-                            let startX = f.x + Math.cos(angle) * (f.rad * 0.4);
-                            let startY = f.y + Math.sin(angle) * (f.rad * 0.4);
-                            let endX = f.x + Math.cos(angle) * f.rad;
-                            let endY = f.y + Math.sin(angle) * f.rad;
-                            
-                            ctx.strokeStyle = rainbowColors[i % rainbowColors.length];
+                        for (let i = 0; i < 8; i++) {
+                            let angle = (i * Math.PI * 2) / 8;
+                            ctx.strokeStyle = rainbow[i % rainbow.length];
                             ctx.beginPath();
-                            ctx.moveTo(startX, startY);
-                            ctx.lineTo(endX, endY);
+                            ctx.moveTo(f.x + Math.cos(angle) * (f.rad * 0.3), f.y + Math.sin(angle) * (f.rad * 0.3));
+                            ctx.lineTo(f.x + Math.cos(angle) * f.rad, f.y + Math.sin(angle) * f.rad);
                             ctx.stroke();
                         }
                         ctx.restore();
-                        
-                        // Advance expansion step updates
-                        f.rad += 3.5;
-                        f.alpha -= 0.08; // Quickly drops alpha step limits to clear display space
+                        f.rad += 4.0;
+                        f.alpha -= 0.12; // Snappy alpha drop creates distinct vector snaps
                         return f.alpha > 0;
                     });
 
+                    // 6. DRAW CRISP TRACKING BOX LINES FOR ACTIVE PLAYERS
                     lastDrawnPlayers = {}; 
                     for (let id in data.players) {
                         let p = data.players[id];
-                        let conf = data.config[p.team];
+                        let col = colors[p.team];
+                        let tag = tags[p.team];
                         
                         ctx.fillStyle = '#000';
                         ctx.fillRect((p.cursorX * scale) - 1, (p.cursorY * scale) - 1, scale + 2, scale + 2);
-                        
-                        let currentGridVal = data.grid[p.cursorX][p.cursorY];
-                        if (currentGridVal !== 0) {
-                            if(currentGridVal === 1) ctx.fillStyle = '#ff3333';
-                            if(currentGridVal === 2) ctx.fillStyle = '#00aaff';
-                            if(currentGridVal === 3) ctx.fillStyle = '#33cc33';
-                            if(currentGridVal === 4) ctx.fillStyle = '#e6b800';
-                            if(currentGridVal === 5) ctx.fillStyle = '#ff00ff';
-                            if(currentGridVal === 6) ctx.fillStyle = '#00ffff';
-                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 0.5, scale - 0.5);
-                        }
 
-                        ctx.strokeStyle = conf.color;
+                        ctx.strokeStyle = col;
                         ctx.lineWidth = 3;
                         ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
                         
-                        ctx.fillStyle = conf.color;
+                        ctx.fillStyle = col;
                         ctx.font = "bold 12px monospace";
-                        ctx.fillText(conf.tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
+                        ctx.fillText(tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
                         
                         lastDrawnPlayers[id] = { x: p.cursorX, y: p.cursorY };
                     }
@@ -276,10 +259,8 @@ def check_udp_socket_input(sock):
 def calculate_conway_generation():
     global grid, next_grid, team_scores, fireworks
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
-    
-    # Empty temporary step queue for tracking hits this generation block frame
     current_frame_collisions = []
-
+    
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
             counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
@@ -307,14 +288,14 @@ def calculate_conway_generation():
                     next_grid[x][y] = max_team
                     population_counts[max_team] += 1
                     
-                    # COLLISION INTERCEPTOR: Detects if newborn cells were formed 
-                    # from the merging bounds of multiple competitive teams
-                    active_parent_teams = [t for t, c in counts.items() if c > 0]
-                    if len(active_parent_teams) >= 2 and random.random() < 0.25:
+                    # Intercept parental cell boundary intersections
+                    active_parents = [t for t, c in counts.items() if c > 0]
+                    if len(active_parents) >= 2 and random.random() < 0.35:
                         current_frame_collisions.append({"x": x, "y": y})
                 else:
                     next_grid[x][y] = EMPTY
 
+    # Screen Majority Volume Counter
     max_cells = max(population_counts.values())
     if max_cells > 0:
         dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
@@ -322,18 +303,25 @@ def calculate_conway_generation():
             team_scores[t_str] += 1
 
     grid, next_grid = next_grid, grid
-    fireworks = current_frame_collisions # Populate cached coordinates stack frame
+    fireworks = current_frame_collisions
 
 async def broadcast_sync(ser, sock):
     global fireworks
     if connected_clients:
+        # NEW HIGH-UTILITY CODEC COMPRESSION:
+        # Condense the matrix array into a tiny, sparse list of living coordinates only
+        sparse_cells_packet = []
+        for x in range(GRID_SIZE):
+            for y in range(GRID_SIZE):
+                if grid[x][y] != EMPTY:
+                    sparse_cells_packet.append([x, y, grid[x][y]])
+
         packet = json.dumps({
             "type": "SYNC", 
-            "grid": grid, 
+            "grid": sparse_cells_packet, # Only transmit active pairs down the network wire
             "players": players, 
             "scores": team_scores,
-            "config": teams_config,
-            "collisions": fireworks # Broadcast spatial event triggers to web lines
+            "collisions": fireworks
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
     
@@ -385,7 +373,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.10)
+            await asyncio.sleep(0.09) # Accelerated clock ticks for crisp visualizer generation flows
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
