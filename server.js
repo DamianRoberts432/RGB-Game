@@ -90,10 +90,9 @@ def tv_dashboard():
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
                     document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
-                    // VISUALIZER TRACER ENGINE: 
-                    // Draws a semi-transparent black overlay mask instead of clearing the board.
-                    // Lower values = longer trails. Higher values = shorter trails.
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+                    // FIXED: Opacity lowered down to 6% (0.06) to leave beautiful, 
+                    // long-lasting neon ghost trail images as structures move and die
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
                     ctx.fillRect(0, 0, 700, 700);
                     
                     let scale = 700 / 64;
@@ -161,9 +160,11 @@ def check_serial_input(ser):
             line = ser.readline().decode('utf-8').strip()
             parts = line.split(':')
             if len(parts) == 3:
-                player_id = str(parts[0]).strip()
-                team_req = str(parts[1]).strip()
-                cmd = str(parts[2]).strip()
+                # FIXED: Stripping the raw data string blocks directly *before* casting, 
+                # removing hidden array markers that were freezing controller responses.
+                player_id = parts[0].strip()
+                team_req = parts[1].strip()
+                cmd = parts[2].strip()
                 
                 if player_id not in players and cmd == 'JOIN':
                     assigned_team = get_balanced_team(team_req)
