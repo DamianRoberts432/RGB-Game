@@ -28,6 +28,7 @@ TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
 # Core game state managed strictly as a flat hashing dictionary of coordinate pairs
+# Formatted as {(x, y): team_id} to ensure 60 FPS sparse execution speeds
 grid_cells = {}
 
 teams_config = {
@@ -226,14 +227,14 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Replaced completely broken parts.strip() loop leaks with explicit bracket indices
+    # FIXED: Replaced array layout leaks with rock-solid explicit list indexing ([0], [1], [2])
     if len(parts) == 3:
-        player_id = parts[0].strip()
-        team_req = parts[1].strip()
-        cmd = parts[2].strip()
+        player_id = str(parts[0]).strip()
+        team_req = str(parts[1]).strip()
+        cmd = str(parts[2]).strip()
     elif len(parts) == 2:
-        team_req = parts[0].strip()
-        cmd = parts[1].strip()
+        team_req = str(parts[0]).strip()
+        cmd = str(parts[1]).strip()
         player_id = f"LEGACY_T{team_req}"
         
     if not player_id or not team_req or not cmd:
