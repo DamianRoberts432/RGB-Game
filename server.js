@@ -111,7 +111,6 @@ def tv_dashboard():
                         ctx.fillRect((lp.x * scale) - 6, (lp.y * scale) - 24, scale + 14, scale + 30);
                     }
 
-                    // Clear previous spawner overlay ring profile path footprint cleanly
                     if (data.spawner) {
                         ctx.fillStyle = '#000';
                         ctx.fillRect((data.spawner.x * scale) - 12, (data.spawner.y * scale) - 12, scale + 24, scale + 24);
@@ -120,13 +119,11 @@ def tv_dashboard():
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
-                    // RLE Sparse unpack stream draw loop
                     data.grid.forEach(cell => {
-                        ctx.fillStyle = colors[cell[2]];
-                        ctx.fillRect(cell[0] * scale, cell[1] * scale, scale - 0.5, scale - 0.5);
+                        ctx.fillStyle = colors[cell];
+                        ctx.fillRect(cell * scale, cell * scale, scale - 0.5, scale - 0.5);
                     });
 
-                    // Render dynamic automated balance spawner core hub node on top layer
                     if (data.spawner) {
                         ctx.save();
                         ctx.strokeStyle = colors[data.spawner.team];
@@ -219,36 +216,48 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
+# FIXED: Re-engineered to process legacy 2-parameter packets and modern 3-parameter data equally
 def route_player_input(line):
     global grid_cells, players
     if not line or ":" not in line:
         return
         
     parts = line.split(':')
+    player_id = None
+    team_req = None
+    cmd = None
+    
     if len(parts) == 3:
+        # Modern packet layout: "PlayerID:Team:Command"
         player_id = str(parts[0]).strip()
         team_req = str(parts[1]).strip()
         cmd = str(parts[2]).strip()
+    elif len(parts) == 2:
+        # Legacy backup packet layout fallback: "Team:Command"
+        team_req = str(parts[0]).strip()
+        cmd = str(parts[1]).strip()
+        # Fallback assigns a static token based on the selected team color channel
+        player_id = f"LEGACY_T{team_req}"
         
-        if not player_id or not team_req or not cmd:
-            return
-        
-        if player_id not in players and cmd == 'JOIN':
-            assigned_team = get_balanced_team(team_req)
-            players[player_id] = {
-                "cursorX": random.randint(30, 90), 
-                "cursorY": random.randint(30, 90),
-                "team": assigned_team
-            }
-        
-        if player_id in players:
-            p = players[player_id]
-            if cmd == 'UP':      p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
-            elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
-            elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
-            elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
-            elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
-            elif cmd == 'ESC':   grid_cells.clear()
+    if not player_id or not team_req or not cmd:
+        return
+    
+    if player_id not in players and cmd == 'JOIN':
+        assigned_team = get_balanced_team(team_req)
+        players[player_id] = {
+            "cursorX": random.randint(30, 90), 
+            "cursorY": random.randint(30, 90),
+            "team": assigned_team
+        }
+    
+    if player_id in players:
+        p = players[player_id]
+        if cmd == 'UP':      p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
+        elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
+        elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
+        elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
+        elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
+        elif cmd == 'ESC':   grid_cells.clear()
 
 def check_serial_input(ser):
     if not ser:
@@ -274,7 +283,6 @@ def check_udp_socket_input(sock):
     except Exception:
         pass
 
-# NEW ANTI-LAG STRATEGY: High-Efficiency Sparse Cellular Neighborhood Evaluator
 def calculate_conway_generation():
     global grid_cells, team_scores, fireworks, spawner_x, spawner_y, spawner_team, last_spawner_shift, last_spawner_fire
     
@@ -282,38 +290,29 @@ def calculate_conway_generation():
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     current_frame_collisions = []
 
-    # 1. ROGUE SPAWNER AUTOMATED UNDERDOG LOGIC PASSTHROUGH
-    if current_time - last_spawner_shift >= 6.0: # Shifts faction alliance every 6 seconds
+    if current_time - last_spawner_shift >= 6.0: 
         spawner_team = random.randint(1, 6)
-        # Relocate core hub position dynamically
         spawner_x = random.randint(20, 100)
         spawner_y = random.randint(20, 100)
         last_spawner_shift = current_time
 
-    if current_time - last_spawner_fire >= 2.5: # Fires adaptive balancer weapons every 2.5 seconds
+    if current_time - last_spawner_fire >= 2.5: 
         last_spawner_fire = current_time
-        # Determine highest ranking opponent profile vs weakest group status metrics
         try:
             underdog_team = min(team_scores, key=team_scores.get)
             leader_team = max(team_scores, key=team_scores.get)
-            
-            # If a leader exists, shift spawner colors to assist the underdog team
             spawner_team = int(underdog_team)
             
-            # Fire an automatic defense cluster glider at leader cursor coordinate paths
             target_x, target_y = 64, 64
             for p in players.values():
                 if str(p["team"]) == leader_team:
                     target_x, target_y = p["cursorX"], p["cursorY"]
                     break
             
-            # Deploy trajectory adjustments towards target spaces
             spawn_blob_glider(spawner_x, spawner_y, spawner_team)
         except Exception:
             spawn_blob_glider(spawner_x, spawner_y, spawner_team)
 
-    # 2. SPARSE NEIGHBOR SEEING LOGIC ENGINE
-    # Extract only unique coordinate fields that touch currently living cell bodies
     neighbors_to_check = set()
     for (x, y) in grid_cells.keys():
         for i in range(-1, 2):
@@ -352,7 +351,6 @@ def calculate_conway_generation():
                 if len(parents) >= 2 and random.random() < 0.35:
                     current_frame_collisions.append({"x": x, "y": y})
 
-    # Screen Volume Majority Ticker Scorer
     max_cells = max(population_counts.values())
     if max_cells > 0:
         dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
@@ -365,7 +363,6 @@ def calculate_conway_generation():
 async def broadcast_sync(ser, sock):
     global fireworks, grid_cells, spawner_x, spawner_y, spawner_team
     if connected_clients:
-        # Build ultra-light compressed sparse tracking block stream array directly
         sparse_cells_packet = [[x, y, t] for (x, y), t in grid_cells.items()]
 
         packet = json.dumps({
@@ -374,7 +371,7 @@ async def broadcast_sync(ser, sock):
             "players": players, 
             "scores": team_scores,
             "collisions": fireworks,
-            "spawner": {"x": spawner_x, "y": spawner_y, "team": spawner_team} # Stream spawner telemetry coordinates
+            "spawner": {"x": spawner_x, "y": spawner_y, "team": spawner_team} 
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
     
@@ -426,7 +423,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.08) # Clock ticks tuned slightly upward to accelerate visual flow velocity
+            await asyncio.sleep(0.08) 
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
