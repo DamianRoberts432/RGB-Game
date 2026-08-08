@@ -229,7 +229,7 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Access array index numbers, [1], and [2] cleanly instead of targeting the list object
+    # FIXED: Added discrete bracket index numbers to target array string values safely
     if len(parts) == 3:
         player_id = str(parts[0]).strip()
         team_req = str(parts[1]).strip()
@@ -406,6 +406,7 @@ async def main_game_loop():
 
     sock = None
     try:
+        sock = socket.socket(socket.AF_INET, socket.socket(socket.AF_INET) if hasattr(socket, 'AF_INET') else socket.SOCK_DGRAM)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", 3001))
         sock.setblocking(False)
