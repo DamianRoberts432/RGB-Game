@@ -28,7 +28,6 @@ TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
 # Core game state managed strictly as a flat hashing dictionary of coordinate pairs
-# Formatted as {(x, y): team_id} to ensure 60 FPS sparse execution speeds
 grid_cells = {}
 
 teams_config = {
@@ -47,8 +46,6 @@ fireworks = []
 spawner_x = 64
 spawner_y = 64
 spawner_team = TEAM_RED
-last_spawner_shift = 0
-last_spawner_fire = 0
 
 def seed_initial_tv_matrix():
     global grid_cells
@@ -229,7 +226,7 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Restored explicit array element selectors to unpack data blocks properly [1]
+    # FIXED: Re-indexed array unpack components cleanly with integer variables
     if len(parts) == 3:
         player_id = parts[0].strip()
         team_req = parts[1].strip()
@@ -284,34 +281,9 @@ def check_udp_socket_input(sock):
         pass
 
 def calculate_conway_generation():
-    global grid_cells, team_scores, fireworks, spawner_x, spawner_y, spawner_team, last_spawner_shift, last_spawner_fire
-    
-    current_time = time.time()
+    global grid_cells, team_scores, fireworks
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     current_frame_collisions = []
-
-    if current_time - last_spawner_shift >= 6.0: 
-        spawner_team = random.randint(1, 6)
-        spawner_x = random.randint(20, 100)
-        spawner_y = random.randint(20, 100)
-        last_spawner_shift = current_time
-
-    if current_time - last_spawner_fire >= 2.5: 
-        last_spawner_fire = current_time
-        try:
-            underdog_team = min(team_scores, key=team_scores.get)
-            leader_team = max(team_scores, key=team_scores.get)
-            spawner_team = int(underdog_team)
-            
-            target_x, target_y = 64, 64
-            for p in players.values():
-                if str(p["team"]) == leader_team:
-                    target_x, target_y = p["cursorX"], p["cursorY"]
-                    break
-            
-            spawn_blob_glider(spawner_x, spawner_y, spawner_team)
-        except Exception:
-            spawn_blob_glider(spawner_x, spawner_y, spawner_team)
 
     neighbors_to_check = set()
     for (x, y) in grid_cells.keys():
@@ -359,6 +331,31 @@ def calculate_conway_generation():
 
     grid_cells = next_cells
     fireworks = current_frame_collisions
+
+# FIXED: Isolated Automated AI Player loop logic into its own async routine thread
+async def run_isolated_ai_spawner_loop():
+    global spawner_x, spawner_y, spawner_team, team_scores
+    while True:
+        await asyncio.sleep(2.5) # Automated trigger checks strictly every 2.5 seconds
+        try:
+            spawner_team = random.randint(1, 6)
+            spawner_x = random.randint(20, 100)
+            spawner_y = random.randint(20, 100)
+            
+            if team_scores:
+                underdog_team = min(team_scores, key=team_scores.get)
+                leader_team = max(team_scores, key=team_scores.get)
+                spawner_team = int(underdog_team)
+                
+                target_x, target_y = 64, 64
+                for p in players.values():
+                    if str(p["team"]) == leader_team:
+                        target_x, target_y = p["cursorX"], p["cursorY"]
+                        break
+                        
+                spawn_blob_glider(spawner_x, spawner_y, spawner_team)
+        except Exception:
+            pass
 
 async def broadcast_sync(ser, sock):
     global fireworks, grid_cells, spawner_x, spawner_y, spawner_team
@@ -425,8 +422,10 @@ async def main_game_loop():
             await broadcast_sync(ser, sock)
             await asyncio.sleep(0.10) 
 
+    # Launch human listener pipelines, physics engine steps, and AI spawners independently
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
+    asyncio.create_task(run_isolated_ai_spawner_loop())
 
 def start_servers():
     from threading import Thread
