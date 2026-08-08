@@ -74,6 +74,10 @@ def tv_dashboard():
             let canvas = document.getElementById('gameCanvas');
             let ctx = canvas.getContext('2d');
             let ws = new WebSocket('ws://' + location.hostname + ':3001');
+            
+            // Track player locations on previous frame to handle localized trail cleanup
+            let lastDrawnPlayers = {};
+
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
                 if (data.type === 'SYNC') {
@@ -82,12 +86,24 @@ def tv_dashboard():
                     document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
                     document.getElementById('s4').innerText = String(data.scores["4"]).padStart(4, '0');
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
-                    document.getElementById('s6').innerText = String(data.players ? data.scores["6"] : 0).padStart(4, '0');
-                    
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
-                    ctx.fillRect(0, 0, 700, 700);
+                    document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
                     let scale = 700 / 64;
+
+                    // 1. CLEAN RECT OVERRIDES: Completely clear previous frames reticle bounds to eliminate player trails
+                    for (let id in lastDrawnPlayers) {
+                        let lp = lastDrawnPlayers[id];
+                        ctx.fillStyle = '#000';
+                        // Clean full cursor crosshair clip boundary box including top floating tag text
+                        ctx.fillRect((lp.x * scale) - 4, (lp.y * scale) - 20, scale + 8, scale + 24);
+                    }
+
+                    // 2. INCREASED GHOST TRAIL ENGINE OPAQUE:
+                    // Shifted to 22% (0.22) opacity so dead structures disappear and dissolve noticeably faster
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+                    ctx.fillRect(0, 0, 700, 700);
+                    
+                    // 3. RENDER ENVIRONMENT CELLS
                     for (let x = 0; x < 64; x++) {
                         for (let y = 0; y < 64; y++) {
                             let val = data.grid[x][y];
@@ -102,15 +118,40 @@ def tv_dashboard():
                             }
                         }
                     }
+
+                    // 4. DRAW SHARP PLAYER CONTROLLER RETICLES (WITHOUT LEAVING TRAILS)
+                    lastDrawnPlayers = {}; // Rebuild tracking cache
                     for (let id in data.players) {
                         let p = data.players[id];
                         let conf = data.config[p.team];
+                        
+                        // Clear the immediate square underneath the current reticle to make it 100% sharp
+                        ctx.fillStyle = '#000';
+                        ctx.fillRect((p.cursorX * scale) - 1, (p.cursorY * scale) - 1, scale + 2, scale + 2);
+                        
+                        // Re-render cell immediately if it is currently inside the reticle space
+                        let currentGridVal = data.grid[p.cursorX][p.cursorY];
+                        if (currentGridVal !== 0) {
+                            if(currentGridVal === 1) ctx.fillStyle = '#ff3333';
+                            if(currentGridVal === 2) ctx.fillStyle = '#00aaff';
+                            if(currentGridVal === 3) ctx.fillStyle = '#33cc33';
+                            if(currentGridVal === 4) ctx.fillStyle = '#e6b800';
+                            if(currentGridVal === 5) ctx.fillStyle = '#ff00ff';
+                            if(currentGridVal === 6) ctx.fillStyle = '#00ffff';
+                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 1, scale - 1);
+                        }
+
+                        // Draw crisp indicator boxes lines over the cleared sector
                         ctx.strokeStyle = conf.color;
                         ctx.lineWidth = 3;
                         ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
+                        
                         ctx.fillStyle = conf.color;
                         ctx.font = "bold 12px monospace";
                         ctx.fillText(conf.tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
+                        
+                        // Cache locations for cleanup on next engine tick
+                        lastDrawnPlayers[id] = { x: p.cursorX, y: p.cursorY };
                     }
                 }
             };
@@ -179,7 +220,6 @@ def check_serial_input(ser):
 def calculate_conway_generation():
     global grid, next_grid, team_scores
     
-    # Reset population counter map for this frame step
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     
     for x in range(GRID_SIZE):
@@ -211,16 +251,12 @@ def calculate_conway_generation():
                 else:
                     next_grid[x][y] = EMPTY
 
-    # SCREEN MAJORITY DOMINANCE SCORER:
-    # Identify which active color team holds the absolute highest block volume on screen
     max_cells = max(population_counts.values())
     if max_cells > 0:
         dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
-        # Award +1 frame point to the team currently holding screen dominance
         for t_str in dominant_teams:
             team_scores[t_str] += 1
 
-    # Swap references cleanly
     grid, next_grid = next_grid, grid
 
 async def broadcast_sync(ser):
