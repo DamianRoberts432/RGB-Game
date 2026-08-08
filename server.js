@@ -38,6 +38,8 @@ teams_config = {
 }
 
 players = {}
+# Thread queue cache managing active geometric collision vectors
+fireworks = []
 
 def seed_initial_tv_matrix():
     global grid
@@ -77,6 +79,8 @@ def tv_dashboard():
             let ws = new WebSocket('ws://' + location.hostname + ':3002');
             
             let lastDrawnPlayers = {};
+            // Local client-side tracking state cache for fireworks transitions
+            let activeFireworks = [];
 
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
@@ -99,6 +103,7 @@ def tv_dashboard():
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
+                    // Render standard field organisms cells
                     for (let x = 0; x < 128; x++) {
                         for (let y = 0; y < 128; y++) {
                             let val = data.grid[x][y];
@@ -113,6 +118,42 @@ def tv_dashboard():
                             }
                         }
                     }
+
+                    // Append new collision events dropped by the Python engine
+                    if (data.collisions) {
+                        data.collisions.forEach(c => {
+                            activeFireworks.push({ x: c.x * scale, y: c.y * scale, rad: 2, alpha: 1.0 });
+                        });
+                    }
+
+                    // NEW: VECTOR RAINBOW FIREWORK ENGINE RENDER
+                    activeFireworks = activeFireworks.filter(f => {
+                        ctx.save();
+                        ctx.globalAlpha = f.alpha;
+                        ctx.lineWidth = 2;
+                        
+                        // Project structured geometric multi-colored line segments (Rainbow burst)
+                        let rainbowColors = ['#ff3333', '#e6b800', '#33cc33', '#00ffff', '#00aaff', '#ff00ff'];
+                        for (let i = 0; i < 12; i++) {
+                            let angle = (i * Math.PI * 2) / 12;
+                            let startX = f.x + Math.cos(angle) * (f.rad * 0.4);
+                            let startY = f.y + Math.sin(angle) * (f.rad * 0.4);
+                            let endX = f.x + Math.cos(angle) * f.rad;
+                            let endY = f.y + Math.sin(angle) * f.rad;
+                            
+                            ctx.strokeStyle = rainbowColors[i % rainbowColors.length];
+                            ctx.beginPath();
+                            ctx.moveTo(startX, startY);
+                            ctx.lineTo(endX, endY);
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                        
+                        // Advance expansion step updates
+                        f.rad += 3.5;
+                        f.alpha -= 0.08; // Quickly drops alpha step limits to clear display space
+                        return f.alpha > 0;
+                    });
 
                     lastDrawnPlayers = {}; 
                     for (let id in data.players) {
@@ -233,9 +274,12 @@ def check_udp_socket_input(sock):
         pass
 
 def calculate_conway_generation():
-    global grid, next_grid, team_scores
+    global grid, next_grid, team_scores, fireworks
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     
+    # Empty temporary step queue for tracking hits this generation block frame
+    current_frame_collisions = []
+
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
             counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
@@ -262,6 +306,12 @@ def calculate_conway_generation():
                     max_team = max(counts, key=counts.get)
                     next_grid[x][y] = max_team
                     population_counts[max_team] += 1
+                    
+                    # COLLISION INTERCEPTOR: Detects if newborn cells were formed 
+                    # from the merging bounds of multiple competitive teams
+                    active_parent_teams = [t for t, c in counts.items() if c > 0]
+                    if len(active_parent_teams) >= 2 and random.random() < 0.25:
+                        current_frame_collisions.append({"x": x, "y": y})
                 else:
                     next_grid[x][y] = EMPTY
 
@@ -272,15 +322,18 @@ def calculate_conway_generation():
             team_scores[t_str] += 1
 
     grid, next_grid = next_grid, grid
+    fireworks = current_frame_collisions # Populate cached coordinates stack frame
 
 async def broadcast_sync(ser, sock):
+    global fireworks
     if connected_clients:
         packet = json.dumps({
             "type": "SYNC", 
             "grid": grid, 
             "players": players, 
             "scores": team_scores,
-            "config": teams_config
+            "config": teams_config,
+            "collisions": fireworks # Broadcast spatial event triggers to web lines
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
     
@@ -308,8 +361,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Serial on: {ports[0]}")
+            ser = serial.Serial(ports, 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Serial on: {ports}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
