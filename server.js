@@ -33,7 +33,6 @@ history3 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 structure_awarded_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
-# Master teams configuration maps containing colors and abbreviation tags
 teams_config = {
     "1": {"color": "#ff3333", "name": "RED", "tag": "R"},
     "2": {"color": "#00aaff", "name": "BLUE", "tag": "B"},
@@ -43,7 +42,6 @@ teams_config = {
     "6": {"color": "#00ffff", "name": "CYAN", "tag": "C"}
 }
 
-# Master state mapping tracking multiple concurrent active players dynamically
 players = {}
 
 def seed_initial_tv_matrix():
@@ -85,7 +83,6 @@ def tv_dashboard():
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
                 if (data.type === 'SYNC') {
-                    // Update global group score totals
                     document.getElementById('s1').innerText = String(data.scores["1"]).padStart(4, '0');
                     document.getElementById('s2').innerText = String(data.scores["2"]).padStart(4, '0');
                     document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
@@ -93,7 +90,10 @@ def tv_dashboard():
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
                     document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
-                    ctx.fillStyle = '#000';
+                    // VISUALIZER TRACER ENGINE: 
+                    // Draws a semi-transparent black overlay mask instead of clearing the board.
+                    // Lower values = longer trails. Higher values = shorter trails.
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
                     ctx.fillRect(0, 0, 700, 700);
                     
                     let scale = 700 / 64;
@@ -111,17 +111,12 @@ def tv_dashboard():
                             }
                         }
                     }
-                    
-                    // Render real-time multi-player cursor pointers and team color indicator tags
                     for (let id in data.players) {
                         let p = data.players[id];
                         let conf = data.config[p.team];
-                        
                         ctx.strokeStyle = conf.color;
                         ctx.lineWidth = 3;
                         ctx.strokeRect(p.cursorX * scale, p.cursorY * scale, scale, scale);
-                        
-                        // Render floating team color text labels above reticle intersections
                         ctx.fillStyle = conf.color;
                         ctx.font = "bold 12px monospace";
                         ctx.fillText(conf.tag, (p.cursorX * scale) - 2, (p.cursorY * scale) - 6);
@@ -148,19 +143,14 @@ def spawn_blob_glider(x, y, team):
 # BLOCK 2 OF 2: SERIAL RUNTIME PARSING, PHYSICS ENGINE, AND SOCKET BROADCASTS
 # ============================================================================
 
-# Maintain team scores globally outside player profiles to preserve metrics
 team_scores = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0}
 
 def get_balanced_team(requested_team):
-    # Counts active players currently grouped into each team number string
     counts = {str(i): 0 for i in range(1, 7)}
     for p in players.values():
         counts[str(p["team"])] += 1
-        
     min_team = min(counts, key=counts.get)
-    # If the requested team has more players than the absolute minimum squad size, auto-balance overrides assignment
     if counts[str(requested_team)] > counts[min_team]:
-        print(f"-> Auto-Balance: Overriding Team {requested_team} to Team {min_team}")
         return int(min_team)
     return int(requested_team)
 
@@ -182,12 +172,10 @@ def check_serial_input(ser):
                         "cursorY": random.randint(10, 50),
                         "team": assigned_team
                     }
-                    # Send feedback payload down serial to force phone UI match color change if overwritten
-                    ser.write(f"ASSIGN:{player_id}:{assigned_team}\n".encode())
                 
                 if player_id in players:
                     p = players[player_id]
-                    if cmd == 'UP':    p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
+                    if cmd == 'UP':      p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
                     elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
                     elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
                     elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
@@ -259,7 +247,7 @@ def calculate_conway_generation():
 
     grid = next_grid
 
-async def broadcast_sync():
+async def broadcast_sync(ser):
     if connected_clients:
         packet = json.dumps({
             "type": "SYNC", 
@@ -269,6 +257,17 @@ async def broadcast_sync():
             "config": teams_config
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
+    
+    if ser and players:
+        try:
+            sync_string = "HUD_SYNC:"
+            for pID, p in players.items():
+                score = team_scores.get(str(p["team"]), 0)
+                sync_string += f"{pID}:{p['team']}:{p['cursorX']}:{p['cursorY']}:{score}\n"
+            sync_string += "\0"
+            ser.write(sync_string.encode('utf-8'))
+        except Exception:
+            pass
 
 async def ws_handler(websocket):
     connected_clients.add(websocket)
@@ -284,17 +283,15 @@ async def main_game_loop():
     if ports:
         try:
             ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Successfully opened ESP32 Gateway on port: {ports[0]}")
+            print(f"-> Successfully opened Bidirectional Link on: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
-    else:
-        print("-> No ESP32 device found on USB serial lanes. Fallback active.")
 
     async def run_simulation_intervals():
         while True:
             check_serial_input(ser)
             calculate_conway_generation()
-            await broadcast_sync()
+            await broadcast_sync(ser)
             await asyncio.sleep(0.16)
 
     asyncio.create_task(run_simulation_intervals())
