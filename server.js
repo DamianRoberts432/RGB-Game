@@ -81,14 +81,12 @@ def tv_dashboard():
             let lastDrawnPlayers = {};
             let activeFireworks = [];
             
-            // Map configuration lookup tables
             const colors = {1:'#ff3333', 2:'#00aaff', 3:'#33cc33', 4:'#e6b800', 5:'#ff00ff', 6:'#00ffff'};
             const tags = {1:'R', 2:'B', 3:'G', 4:'Y', 5:'M', 6:'C'};
 
             ws.onmessage = (event) => {
                 let data = JSON.parse(event.data);
                 if (data.type === 'SYNC') {
-                    // Instantly drop team score updates
                     document.getElementById('s1').innerText = String(data.scores["1"]).padStart(4, '0');
                     document.getElementById('s2').innerText = String(data.scores["2"]).padStart(4, '0');
                     document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
@@ -98,19 +96,15 @@ def tv_dashboard():
                     
                     let scale = 700 / 128;
 
-                    // 1. Clean player name tag footprints completely
                     for (let id in lastDrawnPlayers) {
                         let lp = lastDrawnPlayers[id];
                         ctx.fillStyle = '#000';
                         ctx.fillRect((lp.x * scale) - 6, (lp.y * scale) - 24, scale + 14, scale + 30);
                     }
 
-                    // 2. High-speed trail decay matrix mask
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.40)';
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
-                    // 3. SPARSE MATRIX RENDERING ENGINE (CODEC DECOMPRESSION):
-                    // Loop directly over live data pairs instead of reading empty spaces
                     data.grid.forEach(cell => {
                         let cx = cell[0];
                         let cy = cell[1];
@@ -119,14 +113,12 @@ def tv_dashboard():
                         ctx.fillRect(cx * scale, cy * scale, scale - 0.5, scale - 0.5);
                     });
 
-                    // 4. APPEND NEW INTERCEPTED CONWAY BATTLE COLLISIONS
                     if (data.collisions) {
                         data.collisions.forEach(c => {
                             activeFireworks.push({ x: c.x * scale, y: c.y * scale, rad: 1, alpha: 1.0 });
                         });
                     }
 
-                    // 5. VECTOR RAINBOW STARBURST ANIMATOR PASS
                     activeFireworks = activeFireworks.filter(f => {
                         ctx.save();
                         ctx.globalAlpha = f.alpha;
@@ -143,11 +135,10 @@ def tv_dashboard():
                         }
                         ctx.restore();
                         f.rad += 4.0;
-                        f.alpha -= 0.12; // Snappy alpha drop creates distinct vector snaps
+                        f.alpha -= 0.12; 
                         return f.alpha > 0;
                     });
 
-                    // 6. DRAW CRISP TRACKING BOX LINES FOR ACTIVE PLAYERS
                     lastDrawnPlayers = {}; 
                     for (let id in data.players) {
                         let p = data.players[id];
@@ -207,9 +198,10 @@ def route_player_input(line):
         
     parts = line.split(':')
     if len(parts) == 3:
-        player_id = parts[0].strip()
-        team_req = parts[1].strip()
-        cmd = parts[2].strip()
+        # FIXED: Explicitly cast indices to clean strings before processing dictionary keys
+        player_id = str(parts[0]).strip()
+        team_req = str(parts[1]).strip()
+        cmd = str(parts[2]).strip()
         
         if not player_id or not team_req or not cmd:
             return
@@ -288,14 +280,12 @@ def calculate_conway_generation():
                     next_grid[x][y] = max_team
                     population_counts[max_team] += 1
                     
-                    # Intercept parental cell boundary intersections
                     active_parents = [t for t, c in counts.items() if c > 0]
                     if len(active_parents) >= 2 and random.random() < 0.35:
                         current_frame_collisions.append({"x": x, "y": y})
                 else:
                     next_grid[x][y] = EMPTY
 
-    # Screen Majority Volume Counter
     max_cells = max(population_counts.values())
     if max_cells > 0:
         dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
@@ -308,8 +298,6 @@ def calculate_conway_generation():
 async def broadcast_sync(ser, sock):
     global fireworks
     if connected_clients:
-        # NEW HIGH-UTILITY CODEC COMPRESSION:
-        # Condense the matrix array into a tiny, sparse list of living coordinates only
         sparse_cells_packet = []
         for x in range(GRID_SIZE):
             for y in range(GRID_SIZE):
@@ -318,7 +306,7 @@ async def broadcast_sync(ser, sock):
 
         packet = json.dumps({
             "type": "SYNC", 
-            "grid": sparse_cells_packet, # Only transmit active pairs down the network wire
+            "grid": sparse_cells_packet, 
             "players": players, 
             "scores": team_scores,
             "collisions": fireworks
@@ -349,8 +337,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports, 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Serial on: {ports}")
+            ser = serial.Serial(ports[0], 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Serial on: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
@@ -373,7 +361,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.09) # Accelerated clock ticks for crisp visualizer generation flows
+            await asyncio.sleep(0.10)
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
