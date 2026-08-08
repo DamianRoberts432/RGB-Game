@@ -119,7 +119,6 @@ def tv_dashboard():
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
-                    // FIXED: Properly index array components from incoming compressed RLE packet stream pairs
                     data.grid.forEach(cell => {
                         let cx = cell[0];
                         let cy = cell[1];
@@ -327,7 +326,8 @@ def calculate_conway_generation():
         counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
         for i in range(-1, 2):
             for j in range(-1, 2):
-                if i == 0 && j == 0:
+                # FIXED: Swapped out broken C-style '&&' logic check for native Python 'and' keyword
+                if i == 0 and j == 0:
                     continue
                 nx = (x + i + GRID_SIZE) % GRID_SIZE
                 ny = (y + j + GRID_SIZE) % GRID_SIZE
