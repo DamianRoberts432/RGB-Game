@@ -229,14 +229,14 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Added discrete bracket index numbers to target array string values safely
+    # FIXED: Restored explicit array element selectors to unpack data blocks properly [1]
     if len(parts) == 3:
-        player_id = str(parts[0]).strip()
-        team_req = str(parts[1]).strip()
-        cmd = str(parts[2]).strip()
+        player_id = parts[0].strip()
+        team_req = parts[1].strip()
+        cmd = parts[2].strip()
     elif len(parts) == 2:
-        team_req = str(parts[0]).strip()
-        cmd = str(parts[1]).strip()
+        team_req = parts[0].strip()
+        cmd = parts[1].strip()
         player_id = f"LEGACY_T{team_req}"
         
     if not player_id or not team_req or not cmd:
@@ -406,7 +406,6 @@ async def main_game_loop():
 
     sock = None
     try:
-        sock = socket.socket(socket.AF_INET, socket.socket(socket.AF_INET) if hasattr(socket, 'AF_INET') else socket.SOCK_DGRAM)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", 3001))
         sock.setblocking(False)
