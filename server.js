@@ -17,7 +17,6 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
-# High-density coordinate arena grid space footprint
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -27,8 +26,6 @@ TEAM_YELLOW = 4
 TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
-# Core game state managed strictly as a flat hashing dictionary of coordinate pairs
-# Formatted as {(x, y): team_id} to ensure 60 FPS sparse execution speeds
 grid_cells = {}
 
 teams_config = {
@@ -43,7 +40,6 @@ teams_config = {
 players = {}
 fireworks = []
 
-# Automated Rogue Spawner parameters tracking
 spawner_x = 64
 spawner_y = 64
 spawner_team = TEAM_RED
@@ -227,14 +223,14 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Replaced array layout leaks with rock-solid explicit list indexing ([0], [1], [2])
+    # FIXED: Added explicit array bracket index coordinates to target text values safely
     if len(parts) == 3:
-        player_id = str(parts[0]).strip()
-        team_req = str(parts[1]).strip()
-        cmd = str(parts[2]).strip()
+        player_id = parts[0].strip()
+        team_req = parts[1].strip()
+        cmd = parts[2].strip()
     elif len(parts) == 2:
-        team_req = str(parts[0]).strip()
-        cmd = str(parts[1]).strip()
+        team_req = parts[0].strip()
+        cmd = parts[1].strip()
         player_id = f"LEGACY_T{team_req}"
         
     if not player_id or not team_req or not cmd:
