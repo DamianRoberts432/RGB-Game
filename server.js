@@ -229,6 +229,7 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
+    # FIXED: Access array index numbers, [1], and [2] cleanly instead of targeting the list object
     if len(parts) == 3:
         player_id = str(parts[0]).strip()
         team_req = str(parts[1]).strip()
@@ -326,7 +327,6 @@ def calculate_conway_generation():
         counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
         for i in range(-1, 2):
             for j in range(-1, 2):
-                # FIXED: Swapped out broken C-style '&&' logic check for native Python 'and' keyword
                 if i == 0 and j == 0:
                     continue
                 nx = (x + i + GRID_SIZE) % GRID_SIZE
