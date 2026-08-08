@@ -15,7 +15,6 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
-# FIXED: Doubled coordinate footprint size to make cells microscopic
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -41,7 +40,7 @@ players = {}
 
 def seed_initial_tv_matrix():
     global grid
-    for _ in range(800): # Seed count increased to populate the dense 128x128 map
+    for _ in range(800): 
         rx = random.randint(0, GRID_SIZE - 1)
         ry = random.randint(0, GRID_SIZE - 1)
         grid[rx][ry] = random.randint(1, 6)
@@ -58,7 +57,6 @@ def tv_dashboard():
         <style>
             body { background: #050505; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
             canvas { background: #000; border: 4px solid #222; box-shadow: 0 0 30px rgba(255,255,255,0.05); }
-            /* FIXED: Redesigned panel as a structured 2-row grid to fit all 6 teams safely */
             #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #111; padding: 15px; border-radius: 10px; border: 2px solid #222; text-align: center; box-sizing: border-box; }
         </style>
     </head>
@@ -89,17 +87,15 @@ def tv_dashboard():
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
                     document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
                     
-                    // Scale parameter drops down from 700/64 to 700/128 to match smaller resolution
                     let scale = 700 / 128;
 
                     for (let id in lastDrawnPlayers) {
                         let lp = lastDrawnPlayers[id];
                         ctx.fillStyle = '#000';
-                        ctx.fillRect((lp.x * scale) - 4, (lp.y * scale) - 20, scale + 8, scale + 24);
+                        ctx.fillRect((lp.x * scale) - 6, (lp.y * scale) - 24, scale + 14, scale + 30);
                     }
 
-                    // FIXED: Opacity step forced up to 35% (0.35) to dump trailing cells into black significantly faster
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
                     for (let x = 0; x < 128; x++) {
@@ -112,7 +108,7 @@ def tv_dashboard():
                                 if(val === 4) ctx.fillStyle = '#e6b800';
                                 if(val === 5) ctx.fillStyle = '#ff00ff';
                                 if(val === 6) ctx.fillStyle = '#00ffff';
-                                ctx.fillRect(x * scale, y * scale, scale - 0.5, scale - 1);
+                                ctx.fillRect(x * scale, y * scale, scale - 0.5, scale - 0.5);
                             }
                         }
                     }
@@ -133,7 +129,7 @@ def tv_dashboard():
                             if(currentGridVal === 4) ctx.fillStyle = '#e6b800';
                             if(currentGridVal === 5) ctx.fillStyle = '#ff00ff';
                             if(currentGridVal === 6) ctx.fillStyle = '#00ffff';
-                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 0.5, scale - 1);
+                            ctx.fillRect(p.cursorX * scale, p.cursorY * scale, scale - 0.5, scale - 0.5);
                         }
 
                         ctx.strokeStyle = conf.color;
@@ -179,22 +175,39 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
+# FIXED: Re-engineered buffer handling to isolate distinct lines 
+# and eliminate string clipping/jamming failures completely.
 def check_serial_input(ser):
     global grid, players
-    if ser and ser.in_waiting > 0:
-        try:
-            line = ser.readline().decode('utf-8').strip()
+    if not ser:
+        return
+    try:
+        # Read all available bytes sitting in the buffer
+        while ser.in_waiting > 0:
+            raw_bytes = ser.readline()
+            try:
+                line = raw_bytes.decode('utf-8', errors='ignore').strip()
+            except Exception:
+                continue
+                
+            if not line or ":" not in line:
+                continue
+                
             parts = line.split(':')
             if len(parts) == 3:
                 player_id = parts[0].strip()
                 team_req = parts[1].strip()
                 cmd = parts[2].strip()
                 
+                # Check for corrupted split values
+                if not player_id or not team_req or not cmd:
+                    continue
+                
                 if player_id not in players and cmd == 'JOIN':
                     assigned_team = get_balanced_team(team_req)
                     players[player_id] = {
-                        "cursorX": random.randint(20, 100), # Coordinates bound box widened to 128 canvas
-                        "cursorY": random.randint(20, 100),
+                        "cursorX": random.randint(30, 90), 
+                        "cursorY": random.randint(30, 90),
                         "team": assigned_team
                     }
                 
@@ -207,8 +220,8 @@ def check_serial_input(ser):
                     elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
                     elif cmd == 'ESC':
                         grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"Serial Input Reading Error: {e}")
 
 def calculate_conway_generation():
     global grid, next_grid, team_scores
@@ -287,8 +300,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports, 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Link on: {ports}")
+            ser = serial.Serial(ports[0], 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Link on: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
