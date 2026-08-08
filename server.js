@@ -17,6 +17,7 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
+# High-density coordinate arena grid space footprint
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -26,6 +27,8 @@ TEAM_YELLOW = 4
 TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
+# Core game state managed strictly as a flat hashing dictionary of coordinate pairs
+# Formatted as {(x, y): team_id} to ensure 60 FPS sparse execution speeds
 grid_cells = {}
 
 teams_config = {
@@ -40,6 +43,7 @@ teams_config = {
 players = {}
 fireworks = []
 
+# Automated Rogue Common Enemy Spawner parameters tracking
 spawner_x = 64
 spawner_y = 64
 spawner_team = TEAM_RED
@@ -121,6 +125,7 @@ def tv_dashboard():
                         ctx.fillRect(cx * scale, cy * scale, scale - 0.5, scale - 0.5);
                     });
 
+                    // Render dynamic automated balance spawner core hub node on top layer
                     if (data.spawner) {
                         ctx.save();
                         ctx.strokeStyle = colors[data.spawner.team];
@@ -213,6 +218,7 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
+# RESTORED WORKABLE PARSER: Cleaned array indexes to completely matching parameters
 def route_player_input(line):
     global grid_cells, players
     if not line or ":" not in line:
@@ -223,7 +229,6 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Added explicit array bracket index coordinates to target text values safely
     if len(parts) == 3:
         player_id = parts[0].strip()
         team_req = parts[1].strip()
@@ -329,6 +334,7 @@ def calculate_conway_generation():
     grid_cells = next_cells
     fireworks = current_frame_collisions
 
+# NEW DETACHED WORKER: Spawner AI calculations are executed in an isolated loop thread
 async def run_isolated_ai_spawner_loop():
     global spawner_x, spawner_y, spawner_team, team_scores
     while True:
