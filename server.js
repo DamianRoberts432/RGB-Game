@@ -25,13 +25,7 @@ TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
 grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-
-history1 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-history2 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-history3 = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-
-stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-structure_awarded_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+next_grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
 teams_config = {
     "1": {"color": "#ff3333", "name": "RED", "tag": "R"},
@@ -88,10 +82,8 @@ def tv_dashboard():
                     document.getElementById('s3').innerText = String(data.scores["3"]).padStart(4, '0');
                     document.getElementById('s4').innerText = String(data.scores["4"]).padStart(4, '0');
                     document.getElementById('s5').innerText = String(data.scores["5"]).padStart(4, '0');
-                    document.getElementById('s6').innerText = String(data.scores["6"]).padStart(4, '0');
+                    document.getElementById('s6').innerText = String(data.players ? data.scores["6"] : 0).padStart(4, '0');
                     
-                    // FIXED: Opacity lowered down to 6% (0.06) to leave beautiful, 
-                    // long-lasting neon ghost trail images as structures move and die
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
                     ctx.fillRect(0, 0, 700, 700);
                     
@@ -154,14 +146,12 @@ def get_balanced_team(requested_team):
     return int(requested_team)
 
 def check_serial_input(ser):
-    global grid, stable_structure_map, structure_awarded_map, players
+    global grid, players
     if ser and ser.in_waiting > 0:
         try:
             line = ser.readline().decode('utf-8').strip()
             parts = line.split(':')
             if len(parts) == 3:
-                # FIXED: Stripping the raw data string blocks directly *before* casting, 
-                # removing hidden array markers that were freezing controller responses.
                 player_id = parts[0].strip()
                 team_req = parts[1].strip()
                 cmd = parts[2].strip()
@@ -183,22 +173,15 @@ def check_serial_input(ser):
                     elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
                     elif cmd == 'ESC':
                         grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-                        stable_structure_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-                        structure_awarded_map = [[False for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
         except Exception:
             pass
 
 def calculate_conway_generation():
-    global grid, history1, history2, history3, stable_structure_map, structure_awarded_map, team_scores
+    global grid, next_grid, team_scores
     
-    for x in range(GRID_SIZE):
-        for y in range(GRID_SIZE):
-            history3[x][y] = history2[x][y]
-            history2[x][y] = history1[x][y]
-            history1[x][y] = grid[x][y]
-
-    next_grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-
+    # Reset population counter map for this frame step
+    population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+    
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
             counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
@@ -216,37 +199,29 @@ def calculate_conway_generation():
             current = grid[x][y]
             
             if current != EMPTY:
-                next_grid[x][y] = current if (total == 2 or total == 3) else EMPTY
+                cell_state = current if (total == 2 or total == 3) else EMPTY
+                next_grid[x][y] = cell_state
+                if cell_state != EMPTY:
+                    population_counts[cell_state] += 1
             else:
                 if total == 3:
                     max_team = max(counts, key=counts.get)
                     next_grid[x][y] = max_team
-                    if grid[x][y] != EMPTY and grid[x][y] != max_team:
-                        team_scores[str(max_team)] += 5
+                    population_counts[max_team] += 1
                 else:
                     next_grid[x][y] = EMPTY
 
-    for x in range(GRID_SIZE):
-        for y in range(GRID_SIZE):
-            current_cell = next_grid[x][y]
-            is_stable_now = (current_cell != EMPTY) and (current_cell == history2[x][y] or current_cell == history3[x][y])
+    # SCREEN MAJORITY DOMINANCE SCORER:
+    # Identify which active color team holds the absolute highest block volume on screen
+    max_cells = max(population_counts.values())
+    if max_cells > 0:
+        dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
+        # Award +1 frame point to the team currently holding screen dominance
+        for t_str in dominant_teams:
+            team_scores[t_str] += 1
 
-            if is_stable_now:
-                stable_structure_map[x][y] = True
-                if not structure_awarded_map[x][y]:
-                    structure_awarded_map[x][y] = True
-                    if str(current_cell) in team_scores:
-                        team_scores[str(current_cell)] += 50
-            else:
-                stable_structure_map[x][y] = False
-                if structure_awarded_map[x][y]:
-                    structure_awarded_map[x][y] = False
-                    original_owner = history1[x][y]
-                    if current_cell != EMPTY and current_cell != original_owner:
-                        if str(current_cell) in team_scores:
-                            team_scores[str(current_cell)] += 100
-
-    grid = next_grid
+    # Swap references cleanly
+    grid, next_grid = next_grid, grid
 
 async def broadcast_sync(ser):
     if connected_clients:
