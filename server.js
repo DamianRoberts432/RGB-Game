@@ -16,7 +16,7 @@ from flask import Flask, Response, request
 app = Flask(__name__)
 connected_clients = set()
 
-# Clean high-density canvas coordinate boundaries matching your visualizer size
+# High-density coordinate grid space footprint
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -26,8 +26,8 @@ TEAM_YELLOW = 4
 TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
-# Baseline matrix structures processed entirely as a flat hashing coordinate dictionary
-grid_cells = {}
+grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+next_grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
 teams_config = {
     "1": {"color": "#ff3333", "name": "RED", "tag": "R"},
@@ -42,11 +42,11 @@ players = {}
 fireworks = []
 
 def seed_initial_tv_matrix():
-    global grid_cells
+    global grid
     for _ in range(800): 
         rx = random.randint(0, GRID_SIZE - 1)
         ry = random.randint(0, GRID_SIZE - 1)
-        grid_cells[(rx, ry)] = random.randint(1, 6)
+        grid[rx][ry] = random.randint(1, 6)
 
 seed_initial_tv_matrix()
 
@@ -58,9 +58,9 @@ def tv_dashboard():
     <head>
         <title>Cell Combat TV Dashboard</title>
         <style>
-            body { background: #010101; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
-            canvas { background: #000; border: 4px solid #111; box-shadow: 0 0 40px rgba(0,255,255,0.03); }
-            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #050505; padding: 15px; border-radius: 10px; border: 2px solid #111; text-align: center; box-sizing: border-box; }
+            body { background: #020202; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+            canvas { background: #000; border: 4px solid #1a1a1a; box-shadow: 0 0 40px rgba(0,255,255,0.05); }
+            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #0a0a0a; padding: 15px; border-radius: 10px; border: 2px solid #1a1a1a; text-align: center; box-sizing: border-box; }
         </style>
     </head>
     <body>
@@ -124,6 +124,7 @@ def tv_dashboard():
                         ctx.globalAlpha = f.alpha;
                         ctx.lineWidth = 2;
                         let rainbow = ['#ff3333', '#e6b800', '#33cc33', '#00ffff', '#00aaff', '#ff00ff'];
+                        
                         for (let i = 0; i < 8; i++) {
                             let angle = (i * Math.PI * 2) / 8;
                             ctx.strokeStyle = rainbow[i % rainbow.length];
@@ -166,13 +167,13 @@ def tv_dashboard():
     return Response(html_content, mimetype='text/html')
 
 def spawn_blob_glider(x, y, team):
-    global grid_cells
+    global grid
     try:
-        grid_cells[(x % GRID_SIZE, y % GRID_SIZE)] = team
-        grid_cells[((x + 1) % GRID_SIZE, (y + 1) % GRID_SIZE)] = team
-        grid_cells[((x + 2) % GRID_SIZE, (y + 1) % GRID_SIZE)] = team
-        grid_cells[(x % GRID_SIZE, (y + 2) % GRID_SIZE)] = team
-        grid_cells[((x + 1) % GRID_SIZE, (y + 2) % GRID_SIZE)] = team
+        grid[x][y] = team
+        grid[(x + 1) % GRID_SIZE][(y + 1) % GRID_SIZE] = team
+        grid[(x + 2) % GRID_SIZE][(y + 1) % GRID_SIZE] = team
+        grid[x][(y + 2) % GRID_SIZE] = team
+        grid[(x + 1) % GRID_SIZE][(y + 2) % GRID_SIZE] = team
     except Exception:
         pass
 # ============================================================================
@@ -190,45 +191,38 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
-# CLEAN BASELINE ROUTER: Parses the packet using verified explicit array indexes
 def route_player_input(line):
-    global grid_cells, players
+    global grid, players
     if not line or ":" not in line:
         return
         
     parts = line.split(':')
-    player_id = None
-    team_req = None
-    cmd = None
-    
     if len(parts) == 3:
-        player_id = parts[0].strip()
-        team_req = parts[1].strip()
-        cmd = parts[2].strip()
-    elif len(parts) == 2:
-        team_req = parts[0].strip()
-        cmd = parts[1].strip()
-        player_id = f"LEGACY_T{team_req}"
+        # FIXED: Explicitly cast indices to clean strings before processing dictionary keys
+        player_id = str(parts[0]).strip()
+        team_req = str(parts[1]).strip()
+        cmd = str(parts[2]).strip()
         
-    if not player_id or not team_req or not cmd:
-        return
-    
-    if player_id not in players and cmd == 'JOIN':
-        assigned_team = get_balanced_team(team_req)
-        players[player_id] = {
-            "cursorX": random.randint(30, 90), 
-            "cursorY": random.randint(30, 90),
-            "team": assigned_team
-        }
-    
-    if player_id in players:
-        p = players[player_id]
-        if cmd == 'UP':      p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
-        elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
-        elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
-        elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
-        elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
-        elif cmd == 'ESC':   grid_cells.clear()
+        if not player_id or not team_req or not cmd:
+            return
+        
+        if player_id not in players and cmd == 'JOIN':
+            assigned_team = get_balanced_team(team_req)
+            players[player_id] = {
+                "cursorX": random.randint(30, 90), 
+                "cursorY": random.randint(30, 90),
+                "team": assigned_team
+            }
+        
+        if player_id in players:
+            p = players[player_id]
+            if cmd == 'UP':      p["cursorY"] = (p["cursorY"] - 1 + GRID_SIZE) % GRID_SIZE
+            elif cmd == 'DOWN':  p["cursorY"] = (p["cursorY"] + 1) % GRID_SIZE
+            elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
+            elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
+            elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
+            elif cmd == 'ESC':
+                grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
 
 def check_serial_input(ser):
     if not ser:
@@ -255,47 +249,42 @@ def check_udp_socket_input(sock):
         pass
 
 def calculate_conway_generation():
-    global grid_cells, team_scores, fireworks
+    global grid, next_grid, team_scores, fireworks
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     current_frame_collisions = []
-
-    neighbors_to_check = set()
-    for (x, y) in grid_cells.keys():
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = (x + i + GRID_SIZE) % GRID_SIZE
-                ny = (y + j + GRID_SIZE) % GRID_SIZE
-                neighbors_to_check.add((nx, ny))
-
-    next_cells = {}
-
-    for (x, y) in neighbors_to_check:
-        counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                if i == 0 and j == 0:
-                    continue
-                nx = (x + i + GRID_SIZE) % GRID_SIZE
-                ny = (y + j + GRID_SIZE) % GRID_SIZE
-                if (nx, ny) in grid_cells:
-                    counts[grid_cells[(nx, ny)]] += 1
+    
+    for x in range(GRID_SIZE):
+        for y in range(GRID_SIZE):
+            counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    if i == 0 and j == 0:
+                        continue
+                    nx = (x + i + GRID_SIZE) % GRID_SIZE
+                    ny = (y + j + GRID_SIZE) % GRID_SIZE
+                    val = grid[nx][ny]
+                    if val != EMPTY:
+                        counts[val] += 1
+                        
+            total = sum(counts.values())
+            current = grid[x][y]
+            
+            if current != EMPTY:
+                cell_state = current if (total == 2 or total == 3) else EMPTY
+                next_grid[x][y] = cell_state
+                if cell_state != EMPTY:
+                    population_counts[cell_state] += 1
+            else:
+                if total == 3:
+                    max_team = max(counts, key=counts.get)
+                    next_grid[x][y] = max_team
+                    population_counts[max_team] += 1
                     
-        total = sum(counts.values())
-        current_owner = grid_cells.get((x, y), EMPTY)
-        
-        if current_owner != EMPTY:
-            if total == 2 or total == 3:
-                next_cells[(x, y)] = current_owner
-                population_counts[current_owner] += 1
-        else:
-            if total == 3:
-                max_team = max(counts, key=counts.get)
-                next_cells[(x, y)] = max_team
-                population_counts[max_team] += 1
-                
-                parents = [t for t, c in counts.items() if c > 0]
-                if len(parents) >= 2 and random.random() < 0.35:
-                    current_frame_collisions.append({"x": x, "y": y})
+                    active_parents = [t for t, c in counts.items() if c > 0]
+                    if len(active_parents) >= 2 and random.random() < 0.35:
+                        current_frame_collisions.append({"x": x, "y": y})
+                else:
+                    next_grid[x][y] = EMPTY
 
     max_cells = max(population_counts.values())
     if max_cells > 0:
@@ -303,13 +292,17 @@ def calculate_conway_generation():
         for t_str in dominant_teams:
             team_scores[t_str] += 1
 
-    grid_cells = next_cells
+    grid, next_grid = next_grid, grid
     fireworks = current_frame_collisions
 
 async def broadcast_sync(ser, sock):
-    global fireworks, grid_cells
+    global fireworks
     if connected_clients:
-        sparse_cells_packet = [[x, y, t] for (x, y), t in grid_cells.items()]
+        sparse_cells_packet = []
+        for x in range(GRID_SIZE):
+            for y in range(GRID_SIZE):
+                if grid[x][y] != EMPTY:
+                    sparse_cells_packet.append([x, y, grid[x][y]])
 
         packet = json.dumps({
             "type": "SYNC", 
@@ -344,8 +337,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports, 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Serial on: {ports}")
+            ser = serial.Serial(ports[0], 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Serial on: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
@@ -368,7 +361,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.10) 
+            await asyncio.sleep(0.10)
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
