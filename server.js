@@ -119,9 +119,13 @@ def tv_dashboard():
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
+                    // FIXED: Properly index array components from incoming compressed RLE packet stream pairs
                     data.grid.forEach(cell => {
-                        ctx.fillStyle = colors[cell];
-                        ctx.fillRect(cell * scale, cell * scale, scale - 0.5, scale - 0.5);
+                        let cx = cell[0];
+                        let cy = cell[1];
+                        let team = cell[2];
+                        ctx.fillStyle = colors[team];
+                        ctx.fillRect(cx * scale, cy * scale, scale - 0.5, scale - 0.5);
                     });
 
                     if (data.spawner) {
@@ -216,7 +220,6 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
-# FIXED: Re-engineered to process legacy 2-parameter packets and modern 3-parameter data equally
 def route_player_input(line):
     global grid_cells, players
     if not line or ":" not in line:
@@ -228,15 +231,12 @@ def route_player_input(line):
     cmd = None
     
     if len(parts) == 3:
-        # Modern packet layout: "PlayerID:Team:Command"
         player_id = str(parts[0]).strip()
         team_req = str(parts[1]).strip()
         cmd = str(parts[2]).strip()
     elif len(parts) == 2:
-        # Legacy backup packet layout fallback: "Team:Command"
         team_req = str(parts[0]).strip()
         cmd = str(parts[1]).strip()
-        # Fallback assigns a static token based on the selected team color channel
         player_id = f"LEGACY_T{team_req}"
         
     if not player_id or not team_req or not cmd:
@@ -327,7 +327,7 @@ def calculate_conway_generation():
         counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
         for i in range(-1, 2):
             for j in range(-1, 2):
-                if i == 0 and j == 0:
+                if i == 0 && j == 0:
                     continue
                 nx = (x + i + GRID_SIZE) % GRID_SIZE
                 ny = (y + j + GRID_SIZE) % GRID_SIZE
@@ -423,7 +423,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.08) 
+            await asyncio.sleep(0.10) 
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
