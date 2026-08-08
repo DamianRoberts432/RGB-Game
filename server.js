@@ -226,7 +226,7 @@ def route_player_input(line):
     team_req = None
     cmd = None
     
-    # FIXED: Re-indexed array unpack components cleanly with integer variables
+    # FIXED: Replaced completely broken parts.strip() loop leaks with explicit bracket indices
     if len(parts) == 3:
         player_id = parts[0].strip()
         team_req = parts[1].strip()
@@ -332,11 +332,10 @@ def calculate_conway_generation():
     grid_cells = next_cells
     fireworks = current_frame_collisions
 
-# FIXED: Isolated Automated AI Player loop logic into its own async routine thread
 async def run_isolated_ai_spawner_loop():
     global spawner_x, spawner_y, spawner_team, team_scores
     while True:
-        await asyncio.sleep(2.5) # Automated trigger checks strictly every 2.5 seconds
+        await asyncio.sleep(2.5) 
         try:
             spawner_team = random.randint(1, 6)
             spawner_x = random.randint(20, 100)
@@ -422,7 +421,6 @@ async def main_game_loop():
             await broadcast_sync(ser, sock)
             await asyncio.sleep(0.10) 
 
-    # Launch human listener pipelines, physics engine steps, and AI spawners independently
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
     asyncio.create_task(run_isolated_ai_spawner_loop())
