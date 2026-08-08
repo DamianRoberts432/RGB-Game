@@ -10,13 +10,14 @@ import glob
 import sys
 import serial
 import socket
+import time
 from websockets.server import serve
 from flask import Flask, Response, request
 
 app = Flask(__name__)
 connected_clients = set()
 
-# High-density coordinate grid space footprint
+# High-density coordinate arena grid space footprint
 GRID_SIZE = 128
 EMPTY = 0
 TEAM_RED = 1
@@ -26,8 +27,9 @@ TEAM_YELLOW = 4
 TEAM_MAGENTA = 5
 TEAM_CYAN = 6
 
-grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
-next_grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+# Core game state managed strictly as a flat hashing dictionary of coordinate pairs
+# Formatted as {(x, y): team_id} to ensure 60 FPS sparse execution speeds
+grid_cells = {}
 
 teams_config = {
     "1": {"color": "#ff3333", "name": "RED", "tag": "R"},
@@ -41,12 +43,19 @@ teams_config = {
 players = {}
 fireworks = []
 
+# Automated Rogue Spawner parameters tracking
+spawner_x = 64
+spawner_y = 64
+spawner_team = TEAM_RED
+last_spawner_shift = 0
+last_spawner_fire = 0
+
 def seed_initial_tv_matrix():
-    global grid
+    global grid_cells
     for _ in range(800): 
         rx = random.randint(0, GRID_SIZE - 1)
         ry = random.randint(0, GRID_SIZE - 1)
-        grid[rx][ry] = random.randint(1, 6)
+        grid_cells[(rx, ry)] = random.randint(1, 6)
 
 seed_initial_tv_matrix()
 
@@ -58,9 +67,9 @@ def tv_dashboard():
     <head>
         <title>Cell Combat TV Dashboard</title>
         <style>
-            body { background: #020202; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
-            canvas { background: #000; border: 4px solid #1a1a1a; box-shadow: 0 0 40px rgba(0,255,255,0.05); }
-            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #0a0a0a; padding: 15px; border-radius: 10px; border: 2px solid #1a1a1a; text-align: center; box-sizing: border-box; }
+            body { background: #010101; color: white; font-family: monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+            canvas { background: #000; border: 4px solid #111; box-shadow: 0 0 40px rgba(0,255,255,0.03); }
+            #scoreboard { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, auto); gap: 10px; width: 700px; margin-bottom: 15px; font-size: 20px; font-weight: bold; background: #050505; padding: 15px; border-radius: 10px; border: 2px solid #111; text-align: center; box-sizing: border-box; }
         </style>
     </head>
     <body>
@@ -102,16 +111,36 @@ def tv_dashboard():
                         ctx.fillRect((lp.x * scale) - 6, (lp.y * scale) - 24, scale + 14, scale + 30);
                     }
 
+                    // Clear previous spawner overlay ring profile path footprint cleanly
+                    if (data.spawner) {
+                        ctx.fillStyle = '#000';
+                        ctx.fillRect((data.spawner.x * scale) - 12, (data.spawner.y * scale) - 12, scale + 24, scale + 24);
+                    }
+
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
                     ctx.fillRect(0, 0, 700, 700);
                     
+                    // RLE Sparse unpack stream draw loop
                     data.grid.forEach(cell => {
-                        let cx = cell[0];
-                        let cy = cell[1];
-                        let team = cell[2];
-                        ctx.fillStyle = colors[team];
-                        ctx.fillRect(cx * scale, cy * scale, scale - 0.5, scale - 0.5);
+                        ctx.fillStyle = colors[cell[2]];
+                        ctx.fillRect(cell[0] * scale, cell[1] * scale, scale - 0.5, scale - 0.5);
                     });
+
+                    // Render dynamic automated balance spawner core hub node on top layer
+                    if (data.spawner) {
+                        ctx.save();
+                        ctx.strokeStyle = colors[data.spawner.team];
+                        ctx.lineWidth = 4;
+                        ctx.shadowBlur = 15;
+                        ctx.shadowColor = colors[data.spawner.team];
+                        ctx.beginPath();
+                        ctx.arc((data.spawner.x * scale) + (scale/2), (data.spawner.y * scale) + (scale/2), scale * 2.5, 0, Math.PI * 2);
+                        ctx.stroke();
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = "bold 10px monospace";
+                        ctx.fillText("AI", (data.spawner.x * scale) - 1, (data.spawner.y * scale) + 4);
+                        ctx.restore();
+                    }
 
                     if (data.collisions) {
                         data.collisions.forEach(c => {
@@ -124,7 +153,6 @@ def tv_dashboard():
                         ctx.globalAlpha = f.alpha;
                         ctx.lineWidth = 2;
                         let rainbow = ['#ff3333', '#e6b800', '#33cc33', '#00ffff', '#00aaff', '#ff00ff'];
-                        
                         for (let i = 0; i < 8; i++) {
                             let angle = (i * Math.PI * 2) / 8;
                             ctx.strokeStyle = rainbow[i % rainbow.length];
@@ -167,13 +195,13 @@ def tv_dashboard():
     return Response(html_content, mimetype='text/html')
 
 def spawn_blob_glider(x, y, team):
-    global grid
+    global grid_cells
     try:
-        grid[x][y] = team
-        grid[(x + 1) % GRID_SIZE][(y + 1) % GRID_SIZE] = team
-        grid[(x + 2) % GRID_SIZE][(y + 1) % GRID_SIZE] = team
-        grid[x][(y + 2) % GRID_SIZE] = team
-        grid[(x + 1) % GRID_SIZE][(y + 2) % GRID_SIZE] = team
+        grid_cells[(x % GRID_SIZE, y % GRID_SIZE)] = team
+        grid_cells[((x + 1) % GRID_SIZE, (y + 1) % GRID_SIZE)] = team
+        grid_cells[((x + 2) % GRID_SIZE, (y + 1) % GRID_SIZE)] = team
+        grid_cells[(x % GRID_SIZE, (y + 2) % GRID_SIZE)] = team
+        grid_cells[((x + 1) % GRID_SIZE, (y + 2) % GRID_SIZE)] = team
     except Exception:
         pass
 # ============================================================================
@@ -192,13 +220,12 @@ def get_balanced_team(requested_team):
     return int(requested_team)
 
 def route_player_input(line):
-    global grid, players
+    global grid_cells, players
     if not line or ":" not in line:
         return
         
     parts = line.split(':')
     if len(parts) == 3:
-        # FIXED: Explicitly cast indices to clean strings before processing dictionary keys
         player_id = str(parts[0]).strip()
         team_req = str(parts[1]).strip()
         cmd = str(parts[2]).strip()
@@ -221,8 +248,7 @@ def route_player_input(line):
             elif cmd == 'LEFT':  p["cursorX"] = (p["cursorX"] - 1 + GRID_SIZE) % GRID_SIZE
             elif cmd == 'RIGHT': p["cursorX"] = (p["cursorX"] + 1) % GRID_SIZE
             elif cmd == 'FIRE':  spawn_blob_glider(p["cursorX"], p["cursorY"], p["team"])
-            elif cmd == 'ESC':
-                grid = [[EMPTY for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+            elif cmd == 'ESC':   grid_cells.clear()
 
 def check_serial_input(ser):
     if not ser:
@@ -248,68 +274,107 @@ def check_udp_socket_input(sock):
     except Exception:
         pass
 
+# NEW ANTI-LAG STRATEGY: High-Efficiency Sparse Cellular Neighborhood Evaluator
 def calculate_conway_generation():
-    global grid, next_grid, team_scores, fireworks
+    global grid_cells, team_scores, fireworks, spawner_x, spawner_y, spawner_team, last_spawner_shift, last_spawner_fire
+    
+    current_time = time.time()
     population_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
     current_frame_collisions = []
-    
-    for x in range(GRID_SIZE):
-        for y in range(GRID_SIZE):
-            counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
-            for i in range(-1, 2):
-                for j in range(-1, 2):
-                    if i == 0 and j == 0:
-                        continue
-                    nx = (x + i + GRID_SIZE) % GRID_SIZE
-                    ny = (y + j + GRID_SIZE) % GRID_SIZE
-                    val = grid[nx][ny]
-                    if val != EMPTY:
-                        counts[val] += 1
-                        
-            total = sum(counts.values())
-            current = grid[x][y]
-            
-            if current != EMPTY:
-                cell_state = current if (total == 2 or total == 3) else EMPTY
-                next_grid[x][y] = cell_state
-                if cell_state != EMPTY:
-                    population_counts[cell_state] += 1
-            else:
-                if total == 3:
-                    max_team = max(counts, key=counts.get)
-                    next_grid[x][y] = max_team
-                    population_counts[max_team] += 1
-                    
-                    active_parents = [t for t, c in counts.items() if c > 0]
-                    if len(active_parents) >= 2 and random.random() < 0.35:
-                        current_frame_collisions.append({"x": x, "y": y})
-                else:
-                    next_grid[x][y] = EMPTY
 
+    # 1. ROGUE SPAWNER AUTOMATED UNDERDOG LOGIC PASSTHROUGH
+    if current_time - last_spawner_shift >= 6.0: # Shifts faction alliance every 6 seconds
+        spawner_team = random.randint(1, 6)
+        # Relocate core hub position dynamically
+        spawner_x = random.randint(20, 100)
+        spawner_y = random.randint(20, 100)
+        last_spawner_shift = current_time
+
+    if current_time - last_spawner_fire >= 2.5: # Fires adaptive balancer weapons every 2.5 seconds
+        last_spawner_fire = current_time
+        # Determine highest ranking opponent profile vs weakest group status metrics
+        try:
+            underdog_team = min(team_scores, key=team_scores.get)
+            leader_team = max(team_scores, key=team_scores.get)
+            
+            # If a leader exists, shift spawner colors to assist the underdog team
+            spawner_team = int(underdog_team)
+            
+            # Fire an automatic defense cluster glider at leader cursor coordinate paths
+            target_x, target_y = 64, 64
+            for p in players.values():
+                if str(p["team"]) == leader_team:
+                    target_x, target_y = p["cursorX"], p["cursorY"]
+                    break
+            
+            # Deploy trajectory adjustments towards target spaces
+            spawn_blob_glider(spawner_x, spawner_y, spawner_team)
+        except Exception:
+            spawn_blob_glider(spawner_x, spawner_y, spawner_team)
+
+    # 2. SPARSE NEIGHBOR SEEING LOGIC ENGINE
+    # Extract only unique coordinate fields that touch currently living cell bodies
+    neighbors_to_check = set()
+    for (x, y) in grid_cells.keys():
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                nx = (x + i + GRID_SIZE) % GRID_SIZE
+                ny = (y + j + GRID_SIZE) % GRID_SIZE
+                neighbors_to_check.add((nx, ny))
+
+    next_cells = {}
+
+    for (x, y) in neighbors_to_check:
+        counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                if i == 0 and j == 0:
+                    continue
+                nx = (x + i + GRID_SIZE) % GRID_SIZE
+                ny = (y + j + GRID_SIZE) % GRID_SIZE
+                if (nx, ny) in grid_cells:
+                    counts[grid_cells[(nx, ny)]] += 1
+                    
+        total = sum(counts.values())
+        current_owner = grid_cells.get((x, y), EMPTY)
+        
+        if current_owner != EMPTY:
+            if total == 2 or total == 3:
+                next_cells[(x, y)] = current_owner
+                population_counts[current_owner] += 1
+        else:
+            if total == 3:
+                max_team = max(counts, key=counts.get)
+                next_cells[(x, y)] = max_team
+                population_counts[max_team] += 1
+                
+                parents = [t for t, c in counts.items() if c > 0]
+                if len(parents) >= 2 and random.random() < 0.35:
+                    current_frame_collisions.append({"x": x, "y": y})
+
+    # Screen Volume Majority Ticker Scorer
     max_cells = max(population_counts.values())
     if max_cells > 0:
         dominant_teams = [str(t) for t, count in population_counts.items() if count == max_cells]
         for t_str in dominant_teams:
             team_scores[t_str] += 1
 
-    grid, next_grid = next_grid, grid
+    grid_cells = next_cells
     fireworks = current_frame_collisions
 
 async def broadcast_sync(ser, sock):
-    global fireworks
+    global fireworks, grid_cells, spawner_x, spawner_y, spawner_team
     if connected_clients:
-        sparse_cells_packet = []
-        for x in range(GRID_SIZE):
-            for y in range(GRID_SIZE):
-                if grid[x][y] != EMPTY:
-                    sparse_cells_packet.append([x, y, grid[x][y]])
+        # Build ultra-light compressed sparse tracking block stream array directly
+        sparse_cells_packet = [[x, y, t] for (x, y), t in grid_cells.items()]
 
         packet = json.dumps({
             "type": "SYNC", 
             "grid": sparse_cells_packet, 
             "players": players, 
             "scores": team_scores,
-            "collisions": fireworks
+            "collisions": fireworks,
+            "spawner": {"x": spawner_x, "y": spawner_y, "team": spawner_team} # Stream spawner telemetry coordinates
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
     
@@ -337,8 +402,8 @@ async def main_game_loop():
     ser = None
     if ports:
         try:
-            ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Successfully opened Bidirectional Serial on: {ports[0]}")
+            ser = serial.Serial(ports, 115200, timeout=0.01)
+            print(f"-> Successfully opened Bidirectional Serial on: {ports}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
@@ -361,7 +426,7 @@ async def main_game_loop():
         while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.10)
+            await asyncio.sleep(0.08) # Clock ticks tuned slightly upward to accelerate visual flow velocity
 
     asyncio.create_task(run_high_speed_io_scanner())
     asyncio.create_task(run_trippy_simulation_ticks())
