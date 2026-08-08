@@ -9,7 +9,7 @@ import os
 import glob
 import sys
 import serial
-import socket # ADDED: Core network socket interface wrapper
+import socket
 from websockets.server import serve
 from flask import Flask, Response, request
 
@@ -74,7 +74,7 @@ def tv_dashboard():
         <script>
             let canvas = document.getElementById('gameCanvas');
             let ctx = canvas.getContext('2d');
-            let ws = new WebSocket('ws://' + location.hostname + ':3001');
+            let ws = new WebSocket('ws://' + location.hostname + ':3002');
             
             let lastDrawnPlayers = {};
 
@@ -176,8 +176,6 @@ def get_balanced_team(requested_team):
         return int(min_team)
     return int(requested_team)
 
-# UNIFIED UN-JAMMABLE COMMAND ROUTER:
-# Processes clean text strings equally whether they came from Serial or Wireless UDP sockets
 def route_player_input(line):
     global grid, players
     if not line or ":" not in line:
@@ -221,7 +219,6 @@ def check_serial_input(ser):
     except Exception:
         pass
 
-# NEW: Captures direct network broadcasts sent over the air via Wi-Fi STA nodes
 def check_udp_socket_input(sock):
     if not sock:
         return
@@ -231,7 +228,7 @@ def check_udp_socket_input(sock):
             line = data.decode('utf-8', errors='ignore').strip()
             route_player_input(line)
     except BlockingIOError:
-        pass # Buffer empty, pass safely back to generation ticks
+        pass
     except Exception:
         pass
 
@@ -287,7 +284,6 @@ async def broadcast_sync(ser, sock):
         })
         await asyncio.gather(*[client.send(packet) for client in connected_clients])
     
-    # Broadcast telemetry tables back down the physical USB cord to your ESP32 router gateway
     if ser and players:
         try:
             sync_string = "HUD_SYNC:"
@@ -308,35 +304,38 @@ async def ws_handler(websocket):
         connected_clients.remove(websocket)
 
 async def main_game_loop():
-    # 1. Initialize the physical USB serial port cord parameters
     ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
     ser = None
     if ports:
         try:
             ser = serial.Serial(ports[0], 115200, timeout=0.01)
-            print(f"-> Successfully opened Serial Link on: {ports[0]}")
+            print(f"-> Successfully opened Bidirectional Serial on: {ports[0]}")
         except Exception as e:
             print(f"Serial Connection Warning: {e}")
 
-    # 2. Initialize the asynchronous wireless socket receiver listener port
     sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("0.0.0.0", 3001))
-        sock.setblocking(False) # Prevents thread locking when empty
+        sock.setblocking(False)
         print("-> Successfully bound Wireless UDP Listener on Port 3001")
     except Exception as e:
         print(f"Network UDP Binding Error: {e}")
 
-    async def run_simulation_intervals():
+    async def run_high_speed_io_scanner():
         while True:
             check_serial_input(ser)
-            check_udp_socket_input(sock) # Scan over-the-air signals simultaneously
+            check_udp_socket_input(sock)
+            await asyncio.sleep(0.01)
+
+    async def run_trippy_simulation_ticks():
+        while True:
             calculate_conway_generation()
             await broadcast_sync(ser, sock)
-            await asyncio.sleep(0.16)
+            await asyncio.sleep(0.10)
 
-    asyncio.create_task(run_simulation_intervals())
+    asyncio.create_task(run_high_speed_io_scanner())
+    asyncio.create_task(run_trippy_simulation_ticks())
 
 def start_servers():
     from threading import Thread
@@ -352,7 +351,7 @@ def start_servers():
 
 async def run_all():
     start_servers()
-    async with serve(ws_handler, "0.0.0.0", 3002): # Shifted WS socket port to avoid binding blockages
+    async with serve(ws_handler, "0.0.0.0", 3002):
         await main_game_loop()
         await asyncio.Event().wait()
 
